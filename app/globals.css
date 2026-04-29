@@ -1,0 +1,89 @@
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #111;
+  background: #fff;
+}
+
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+h1 { font-size: 22px; margin: 0 0 8px; }
+h2 {
+  font-size: 14px;
+  margin: 24px 0 6px;
+  padding: 6px 10px;
+  background: #f5f5f5;
+  border-left: 3px solid #333;
+}
+
+.counters { display: flex; gap: 20px; color: #555; font-size: 13px; margin: 4px 0 16px; }
+
+.filters { margin: 12px 0 20px; display: flex; gap: 8px; }
+.filters a {
+  padding: 6px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  text-decoration: none;
+  color: #333;
+  font-size: 13px;
+}
+.filters a.active { background: #111; color: #fff; border-color: #111; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: #fafafa; font-weight: 600; font-size: 12px; }
+
+.snippet {
+  max-width: 360px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #555;
+  word-break: break-word;
+}
+
+.score { font-weight: 600; }
+.score-high { color: #15803d; }
+.score-mid { color: #a16207; }
+.score-low { color: #6b7280; }
+
+.badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge-ok { background: #dcfce7; color: #166534; }
+.badge-bad { background: #fee2e2; color: #991b1b; }
+.badge-warn { background: #fef3c7; color: #854d0e; }
+
+button {
+  padding: 4px 10px;
+  margin-right: 4px;
+  cursor: pointer;
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 3px;
+  font-size: 12px;
+}
+button:hover { background: #f3f4f6; }
+button.approve { border-color: #15803d; color: #15803d; }
+button.reject { border-color: #b91c1c; color: #b91c1c; }
+
+tr.approved { background: #f0fdf4; }
+tr.rejected { background: #fef2f2; opacity: 0.6; }
+
+a { color: #2563eb; }
+.empty { padding: 32px; text-align: center; color: #888; }
