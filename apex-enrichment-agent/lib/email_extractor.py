@@ -6,6 +6,7 @@ If the assertion ever fails, it is a hard bug.
 """
 from __future__ import annotations
 
+import html as html_lib
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -40,6 +41,7 @@ class EmailHit:
     snippet: str          # 50 chars before + email + 50 chars after
     score: int
     fetched_at: str
+    method: str = "regex"  # 'regex' | 'llm_assist' | 'post_check'
 
 
 def _score(email: str) -> int:
@@ -51,10 +53,21 @@ def _score(email: str) -> int:
 
 
 def _snippet(haystack: str, needle: str, context: int = 50) -> str:
-    """Extract 50 chars before + email + 50 chars after, normalized."""
+    """Extract 50 chars before + email + 50 chars after, normalized.
+
+    Falls back to the deobfuscated source if the email only appears in
+    obfuscated form (e.g. "contact [at] domain.com", "&#64;"). The snippet
+    must remain non-empty to satisfy the proof-of-provenance contract.
+    """
     idx = haystack.lower().find(needle.lower())
     if idx == -1:
-        return ""
+        # Email was matched via deobfuscation — slice from the deobfuscated
+        # source so the human reviewer still sees recognizable context.
+        deob = _deobfuscate(haystack)
+        idx = deob.lower().find(needle.lower())
+        if idx == -1:
+            return ""
+        haystack = deob
     start = max(0, idx - context)
     end = min(len(haystack), idx + len(needle) + context)
     raw = haystack[start:end]
@@ -71,7 +84,10 @@ def _deobfuscate(html: str) -> str:
     the email is rejected. This means de-obfuscation never adds emails
     that aren't actually present (in some form) in the source.
     """
-    s = OBFUSCATION_AT.sub("@", html)
+    # Decode HTML entities first (&#64; &#x40; &commat;) — these are the most
+    # common silent-failure case where regex never matched the canonical form.
+    s = html_lib.unescape(html)
+    s = OBFUSCATION_AT.sub("@", s)
     s = OBFUSCATION_DOT.sub(".", s)
     return s
 

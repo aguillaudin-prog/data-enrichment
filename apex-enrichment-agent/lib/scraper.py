@@ -15,7 +15,12 @@ from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,14 +98,23 @@ def _robots_allowed(url: str) -> bool:
     return _robots_cache[domain].can_fetch(USER_AGENT, url)
 
 
-@retry(stop=stop_after_attempt(MAX_RETRIES), wait=wait_exponential(multiplier=1, min=1, max=10))
+@retry(
+    stop=stop_after_attempt(MAX_RETRIES),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type(requests.RequestException),
+)
 def _http_get(url: str) -> requests.Response:
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml",
         "Accept-Language": "en;q=0.9,fr;q=0.8",
     }
-    return requests.get(url, headers=headers, timeout=HTTP_TIMEOUT, allow_redirects=True)
+    resp = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT, allow_redirects=True)
+    # Treat 5xx as transient: raising lets tenacity retry. 4xx are terminal
+    # (404 contact pages are common and shouldn't burn retry budget).
+    if resp.status_code >= 500:
+        resp.raise_for_status()
+    return resp
 
 
 def fetch(url: str) -> FetchResult:

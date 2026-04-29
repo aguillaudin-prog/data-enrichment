@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from lib.db import DraftRow, upsert_draft  # noqa: E402
-from lib.email_extractor import extract_emails  # noqa: E402
+from lib.email_extractor import EmailHit, _score, _snippet, extract_emails  # noqa: E402
 from lib.mx_check import email_mx_valid  # noqa: E402
 from lib.scraper import candidate_urls, fetch  # noqa: E402
 
@@ -66,7 +66,6 @@ def process_operator(row: dict, use_llm: bool) -> int:
     # LLM fallback if no regex hits and the home page fetched OK
     if not all_hits and use_llm and website:
         from lib.llm_assist import llm_extract  # lazy import — optional dep path
-        from lib.email_extractor import EmailHit, _score, _snippet
         result = fetch(website)
         if result.raw_html:
             llm_hits = llm_extract(name, result.url, result.raw_html)
@@ -78,6 +77,7 @@ def process_operator(row: dict, use_llm: bool) -> int:
                     snippet=_snippet(result.raw_html, lh.email),
                     score=_score(lh.email),
                     fetched_at=result.fetched_at,
+                    method="llm_assist",
                 ))
 
     if not all_hits:
@@ -85,7 +85,7 @@ def process_operator(row: dict, use_llm: bool) -> int:
         return 0
 
     # Dedupe by email, keep highest score
-    by_email: dict[str, "EmailHit"] = {}  # type: ignore  # noqa: F821
+    by_email: dict[str, EmailHit] = {}
     for h in all_hits:
         if h.email not in by_email or h.score > by_email[h.email].score:
             by_email[h.email] = h
@@ -95,10 +95,6 @@ def process_operator(row: dict, use_llm: bool) -> int:
 
     written = 0
     for h in by_email.values():
-        method = "llm_assist" if not all(  # crude detection
-            h.email in extract_emails_marker(h) for extract_emails_marker in []
-        ) else "regex"
-        # (method detection simplification — see CLAUDE.md to refine)
         upsert_draft(DraftRow(
             operator_name=name,
             email=h.email,
@@ -108,10 +104,20 @@ def process_operator(row: dict, use_llm: bool) -> int:
             fetched_at=h.fetched_at,
             is_best=(h.email == best_email),
             mx_valid=email_mx_valid(h.email),
-            method="regex",  # TODO Claude Code: track method through pipeline
+            method=h.method,
         ))
         written += 1
     return written
+
+
+def _save_backlog(rows: list[dict], fieldnames: list[str]) -> None:
+    """Atomically rewrite BACKLOG.csv so an interrupted run never corrupts it."""
+    tmp = BACKLOG_PATH.with_suffix(".csv.tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    tmp.replace(BACKLOG_PATH)
 
 
 def main() -> None:
@@ -120,27 +126,46 @@ def main() -> None:
                         help="Process only the first N operators (for testing)")
     parser.add_argument("--no-llm", action="store_true",
                         help="Disable LLM fallback (regex only)")
+    parser.add_argument("--retry", action="store_true",
+                        help="Re-process operators whose status is not 'pending'")
     args = parser.parse_args()
 
     use_llm = not args.no_llm
 
     with BACKLOG_PATH.open(newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+        fieldnames = list(reader.fieldnames or [])
+        rows = list(reader)
+
+    # By default, skip operators already processed in a previous run. The CSV
+    # is the source of truth for "have we tried this one yet"; Supabase upserts
+    # remain idempotent regardless.
+    if args.retry:
+        to_process = list(rows)
+    else:
+        to_process = [r for r in rows if (r.get("enrichment_status") or "pending") == "pending"]
 
     if args.limit:
-        rows = rows[:args.limit]
+        to_process = to_process[:args.limit]
 
-    logger.info(f'{{"pipeline":"start","total_operators":{len(rows)},"use_llm":{use_llm}}}')
+    logger.info(
+        f'{{"pipeline":"start","total_operators":{len(to_process)},'
+        f'"skipped":{len(rows) - len(to_process)},"use_llm":{use_llm}}}'
+    )
     total_written = 0
-    for i, row in enumerate(rows, 1):
+    for i, row in enumerate(to_process, 1):
         try:
             n = process_operator(row, use_llm=use_llm)
+            row["enrichment_status"] = "enriched" if n > 0 else "not_found"
             total_written += n
         except Exception as e:
             logger.exception(f"Failed on {row.get('operator_name')}: {e}")
+            row["enrichment_status"] = "error"
         if i % 10 == 0:
-            logger.info(f'{{"progress":{i},"total":{len(rows)},"written":{total_written}}}')
+            _save_backlog(rows, fieldnames)
+            logger.info(f'{{"progress":{i},"total":{len(to_process)},"written":{total_written}}}')
 
+    _save_backlog(rows, fieldnames)
     logger.info(f'{{"pipeline":"end","drafts_written":{total_written}}}')
 
 
