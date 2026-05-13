@@ -212,37 +212,54 @@ def _poc_picker(key_prefix: str) -> dict:
     }
 
 
+def _legs_sid() -> int:
+    """Monotonically increasing 'session id' for leg widget keys.
+
+    Every time we load a template or reset to a blank mission, we bump this
+    counter. The leg widget keys then include the sid, so previous widget
+    state becomes orphaned in session_state and the fresh widgets start
+    with their value= defaults. This is the only fully reliable way to
+    avoid widget-state superposition across template loads.
+    """
+    return int(st.session_state.get("_legs_sid", 0))
+
+
+def _bump_legs_sid() -> None:
+    st.session_state["_legs_sid"] = _legs_sid() + 1
+
+
 def _leg_editor(idx: int, leg: dict) -> dict:
+    sid = _legs_sid()
+    kprefix = f"leg_s{sid}_{idx}"
+
     # Apply any pending route suggestion BEFORE the route_text widget renders.
-    # This is the only way to update a widget's displayed value from a callback:
-    # set its session_state key while the widget doesn't yet exist this run.
-    pending_route = st.session_state.pop(f"_pending_route_{idx}", None)
+    pending_route = st.session_state.pop(f"_pending_route_{sid}_{idx}", None)
     if pending_route is not None:
-        st.session_state[f"leg_{idx}_route"] = pending_route
+        st.session_state[f"{kprefix}_route"] = pending_route
 
     st.markdown(f"### Leg {idx + 1}")
     c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
     with c1:
         origin = st.text_input(
-            "Origin (ICAO)", value=leg.get("origin", ""), key=f"leg_{idx}_orig"
+            "Origin (ICAO)", value=leg.get("origin", ""), key=f"{kprefix}_orig"
         ).strip().upper()
     with c2:
         destination = st.text_input(
-            "Destination (ICAO)", value=leg.get("destination", ""), key=f"leg_{idx}_dest"
+            "Destination (ICAO)", value=leg.get("destination", ""), key=f"{kprefix}_dest"
         ).strip().upper()
     with c3:
-        fl = st.number_input("FL", min_value=0, max_value=600, value=int(leg.get("fl", 90)), step=10, key=f"leg_{idx}_fl")
+        fl = st.number_input("FL", min_value=0, max_value=600, value=int(leg.get("fl", 90)), step=10, key=f"{kprefix}_fl")
     with c4:
-        tas = st.number_input("TAS (kt)", min_value=50, max_value=900, value=int(leg.get("tas", 140)), step=10, key=f"leg_{idx}_tas")
+        tas = st.number_input("TAS (kt)", min_value=50, max_value=900, value=int(leg.get("tas", 140)), step=10, key=f"{kprefix}_tas")
 
     c5, c6 = st.columns(2)
     with c5:
-        d = st.date_input("Date (UTC)", value=leg.get("date", dt.date.today()), key=f"leg_{idx}_date")
+        d = st.date_input("Date (UTC)", value=leg.get("date", dt.date.today()), key=f"{kprefix}_date")
     with c6:
         t = st.time_input(
             "EOBT (UTC)",
             value=leg.get("eobt_time", dt.time(0, 0)),
-            key=f"leg_{idx}_eobt",
+            key=f"{kprefix}_eobt",
         )
     eobt = dt.datetime.combine(d, t).replace(tzinfo=dt.timezone.utc)
 
@@ -251,18 +268,18 @@ def _leg_editor(idx: int, leg: dict) -> dict:
         route_text = st.text_input(
             "Route texte ICAO (ex. `TYE POLTO LAG L433 IBA R778 TEGDA MNA`)",
             value=leg.get("route_text", ""),
-            key=f"leg_{idx}_route",
+            key=f"{kprefix}_route",
         )
     with rc2:
         st.write("")
         st.write("")
-        if st.button("✨ Suggérer", key=f"leg_{idx}_suggest", help="A* sur les NAVAID dans le corridor"):
+        if st.button("✨ Suggérer", key=f"{kprefix}_suggest", help="A* sur les NAVAID dans le corridor"):
             if origin and destination:
                 with st.spinner("Calcul A*…"):
                     sug = route_suggester.suggest_route(origin, destination)
                 if sug.waypoints and sug.distance_nm > 0:
-                    st.session_state[f"_pending_route_{idx}"] = sug.route_text
-                    st.session_state[f"_pending_suggest_msg_{idx}"] = (
+                    st.session_state[f"_pending_route_{sid}_{idx}"] = sug.route_text
+                    st.session_state[f"_pending_suggest_msg_{sid}_{idx}"] = (
                         f"Route suggérée : `{sug.route_text}` "
                         f"({sug.distance_nm:.0f} NM, {sug.nodes_explored} nœuds explorés)"
                     )
@@ -270,8 +287,7 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                 else:
                     st.error("Pas de route trouvée — vérifie les ICAO d'origine/destination.")
 
-    # Show the success message from a previous suggestion (cleared after one render).
-    msg = st.session_state.pop(f"_pending_suggest_msg_{idx}", None)
+    msg = st.session_state.pop(f"_pending_suggest_msg_{sid}_{idx}", None)
     if msg:
         st.success(msg)
 
@@ -414,52 +430,19 @@ with tab_mission:
     }
 
 
-def _clear_leg_widget_state() -> None:
-    """Forget every widget-level value tied to the legs editor.
-
-    Streamlit's text/number/date/time inputs persist their value in
-    st.session_state under their `key`. When we rewrite st.session_state.legs
-    programmatically (e.g. loading a template), the widgets keep their old
-    value unless we also delete the per-widget keys. This helper does that.
-    """
-    keys = [
-        k for k in list(st.session_state.keys())
-        if k.startswith("leg_") or k.startswith("miss_")
-    ]
-    for k in keys:
-        del st.session_state[k]
-
-
 _NEW_MISSION_LABEL = "✨ Nouvelle mission"
 
 
-def _set_leg_widget_values(idx: int, leg: dict) -> None:
-    """Pre-write the widget state for a leg directly into session_state.
-
-    `value=` on st.text_input/number_input/date_input/time_input is ignored
-    when the widget already has a session_state entry (and Streamlit's
-    internal widget registry sometimes keeps stale entries even after our
-    own `del`). Writing the keys explicitly is the only fully reliable way
-    to make the displayed widget value match the new data.
-    """
-    st.session_state[f"leg_{idx}_orig"] = leg.get("origin", "")
-    st.session_state[f"leg_{idx}_dest"] = leg.get("destination", "")
-    st.session_state[f"leg_{idx}_fl"] = int(leg.get("fl") or 90)
-    st.session_state[f"leg_{idx}_tas"] = int(leg.get("tas") or 140)
-    st.session_state[f"leg_{idx}_date"] = leg.get("date") or dt.date.today()
-    st.session_state[f"leg_{idx}_eobt"] = leg.get("eobt_time") or dt.time(0, 0)
-    st.session_state[f"leg_{idx}_route"] = leg.get("route_text", "")
-
-
 def _apply_template(tpl_name: str, filtered_templates: list) -> None:
-    """Wipe leg widget state and populate st.session_state.legs from a template."""
+    """Populate st.session_state.legs from a template. Bumps the legs sid so
+    every leg widget key becomes fresh and starts with value= defaults."""
     tpl = next((r for r in filtered_templates if r["name"] == tpl_name), None)
     if tpl is None:
         return
     payload = json.loads(tpl["legs_json"])
     legs_data = payload.get("legs") if isinstance(payload, dict) else payload
     base_date = dt.date.today()
-    _clear_leg_widget_state()
+    _bump_legs_sid()
     st.session_state.legs = []
     for li, leg_data in enumerate(legs_data or []):
         hours_from_six = li * 2
@@ -471,7 +454,7 @@ def _apply_template(tpl_name: str, filtered_templates: list) -> None:
             day_offset = 1 + rollover // 16
             eobt_day = base_date + dt.timedelta(days=day_offset)
             eobt_hour = 6 + (rollover % 16)
-        leg = {
+        st.session_state.legs.append({
             "origin": leg_data.get("origin") or "",
             "destination": leg_data.get("destination") or "",
             "fl": leg_data.get("fl") or 90,
@@ -479,17 +462,15 @@ def _apply_template(tpl_name: str, filtered_templates: list) -> None:
             "date": eobt_day,
             "eobt_time": dt.time(eobt_hour, 0),
             "route_text": leg_data.get("route_text") or "",
-        }
-        st.session_state.legs.append(leg)
-        _set_leg_widget_values(li, leg)
+        })
 
 
 def _reset_to_blank_mission() -> None:
-    _clear_leg_widget_state()
-    blank = {"origin": "", "destination": "", "fl": 90, "tas": 140,
-             "date": dt.date.today(), "eobt_time": dt.time(0, 0), "route_text": ""}
-    st.session_state.legs = [blank]
-    _set_leg_widget_values(0, blank)
+    _bump_legs_sid()
+    st.session_state.legs = [
+        {"origin": "", "destination": "", "fl": 90, "tas": 140,
+         "date": dt.date.today(), "eobt_time": dt.time(0, 0), "route_text": ""}
+    ]
     st.session_state.pop("_loaded_tpl_name", None)
 
 
@@ -563,18 +544,12 @@ with tab_legs:
     lc1, lc2, _ = st.columns([1, 1, 4])
     with lc1:
         if st.button("➕ Leg", help="Ajouter un leg"):
-            new_idx = len(st.session_state.legs)
-            for suffix in ("orig", "dest", "fl", "tas", "date", "eobt", "route", "suggested"):
-                st.session_state.pop(f"leg_{new_idx}_{suffix}", None)
             st.session_state.legs.append(
                 {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
             )
             st.rerun()
     with lc2:
         if len(st.session_state.legs) > 1 and st.button("➖ Leg", help="Retirer le dernier leg"):
-            last_idx = len(st.session_state.legs) - 1
-            for suffix in ("orig", "dest", "fl", "tas", "date", "eobt", "route", "suggested"):
-                st.session_state.pop(f"leg_{last_idx}_{suffix}", None)
             st.session_state.legs.pop()
             st.rerun()
 
