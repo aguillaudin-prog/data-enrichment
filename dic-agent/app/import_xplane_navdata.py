@@ -60,6 +60,7 @@ def _is_data_line(line: str) -> bool:
 def import_fixes(path: Path) -> int:
     """Parse earth_fix.dat. Upserts each entry into the waypoint table."""
     rows: list[dict] = []
+    total = 0
     with _open_dat(path) as f:
         for raw in f:
             if not _is_data_line(raw):
@@ -86,14 +87,16 @@ def import_fixes(path: Path) -> int:
                 "kind": "FIX", "user_added": 0,
             })
             if len(rows) >= 5000:
-                db.upsert_waypoints(rows); rows = []
-    n = db.upsert_waypoints(rows) if rows else 0
-    return n
+                total += db.upsert_waypoints(rows); rows = []
+    if rows:
+        total += db.upsert_waypoints(rows)
+    return total
 
 
 def import_navaids(path: Path) -> int:
     """Parse earth_nav.dat. Upserts VORs/NDBs/DMEs into the waypoint table."""
     rows: list[dict] = []
+    total = 0
     with _open_dat(path) as f:
         for raw in f:
             if not _is_data_line(raw):
@@ -134,9 +137,10 @@ def import_navaids(path: Path) -> int:
                 "kind": kind_map[row_code], "user_added": 0,
             })
             if len(rows) >= 5000:
-                db.upsert_waypoints(rows); rows = []
-    n = db.upsert_waypoints(rows) if rows else 0
-    return n
+                total += db.upsert_waypoints(rows); rows = []
+    if rows:
+        total += db.upsert_waypoints(rows)
+    return total
 
 
 def import_airways(path: Path) -> int:
@@ -145,6 +149,7 @@ def import_airways(path: Path) -> int:
     Multi-airway segments (e.g. 'UA601-UN857') yield one row per airway name.
     """
     rows: list[dict] = []
+    total = 0
     with _open_dat(path) as f:
         for raw in f:
             if not _is_data_line(raw):
@@ -183,9 +188,10 @@ def import_airways(path: Path) -> int:
                     "airway_name": awy,
                 })
             if len(rows) >= 5000:
-                db.upsert_airway_segments(rows); rows = []
-    n = db.upsert_airway_segments(rows) if rows else 0
-    return n
+                total += db.upsert_airway_segments(rows); rows = []
+    if rows:
+        total += db.upsert_airway_segments(rows)
+    return total
 
 
 def main(argv: list[str] | None = None) -> int:
