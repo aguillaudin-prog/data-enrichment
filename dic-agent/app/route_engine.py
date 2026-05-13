@@ -146,11 +146,17 @@ def _resolve_token(
         return ResolvedPoint(label=token, lat=None, lon=None, source="unknown", missing=True)
 
     ap = db.find_airport(token)
-    if ap:
-        return ResolvedPoint(
-            label=token, lat=ap["lat"], lon=ap["lon"], source="airport",
-            country_iso=ap["country_iso"],
-        )
+    if ap is not None:
+        # Apply proximity even to airports. Otherwise a 3-letter IATA token
+        # like 'TYE' (which collides with Tyonek, Alaska) short-circuits the
+        # waypoint search and pulls the route 7000 NM off-course.
+        if near_pt is None or _great_circle_nm(near_pt, (ap["lat"], ap["lon"])) <= max_nm_from_near:
+            return ResolvedPoint(
+                label=token, lat=ap["lat"], lon=ap["lon"], source="airport",
+                country_iso=ap["country_iso"],
+            )
+        # else: fall through to the waypoint search — maybe the 'real' token
+        # is a NAVAID with the same ident, located closer.
 
     candidates = db.find_waypoints_all(token)
     if not candidates:
