@@ -6,21 +6,24 @@ from __future__ import annotations
 
 from app import db
 
+AMAZONE = "AMAZONE AIRLINES / DYNAMI AVIATION OPS"
+
 DEFAULT_PILOTS = [
-    {"name": "Kornelius Wicaksono", "role": "CDB", "rank": "CPT"},
-    {"name": "Aditya Tri Hertiawan", "role": "CDB", "rank": "CPT"},
-    {"name": "Saba Muhammad", "role": "FO", "rank": "FO"},
-    {"name": "Wanda Respati", "role": "FO", "rank": "FO"},
+    {"name": "Kornelius Wicaksono", "role": "CDB", "rank": "CPT", "operator": AMAZONE},
+    {"name": "Aditya Tri Hertiawan", "role": "CDB", "rank": "CPT", "operator": AMAZONE},
+    {"name": "Saba Muhammad", "role": "FO", "rank": "FO", "operator": AMAZONE},
+    {"name": "Wanda Respati", "role": "FO", "rank": "FO", "operator": AMAZONE},
 ]
 
 
 def main() -> int:
     db.init_schema()
     for p in DEFAULT_PILOTS:
-        db.save_pilot(name=p["name"], role=p["role"], rank=p["rank"])
+        db.save_pilot(name=p["name"], role=p["role"], rank=p["rank"], allowed_operator=p["operator"])
     print(f"Seeded {len(DEFAULT_PILOTS)} pilots:")
     for p in db.list_pilots():
-        print(f"  [{p['role']}] {p['rank']} {p['name']}")
+        op = (p["allowed_operator"] or "(any)") if "allowed_operator" in p.keys() else "(any)"
+        print(f"  [{p['role']}] {p['rank']} {p['name']}  → {op}")
     return 0
 
 

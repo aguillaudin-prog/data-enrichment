@@ -1,0 +1,144 @@
+[
+  {
+    "name": "BÉNIN / DBBB → DIAP → DIBK → DIKO",
+    "category": "Bénin",
+    "legs": [
+      {
+        "order": 1,
+        "origin": "DBBB",
+        "destination": "DIAP",
+        "route_text": "TYE EBUSO ENKIT ARABA AD",
+        "fl": null,
+        "tas": null
+      },
+      {
+        "order": 2,
+        "origin": "DIAP",
+        "destination": "DIBK",
+        "route_text": "AD G 851 BKY",
+        "fl": null,
+        "tas": null
+      },
+      {
+        "order": 3,
+        "origin": "DIBK",
+        "destination": "DIAP",
+        "route_text": "BKY UG 851 AD",
+        "fl": null,
+        "tas": null
+      },
+      {
+        "order": 4,
+        "origin": "DIAP",
+        "destination": "DIKO",
+        "route_text": "AD G 851 BKY G 851 BONTO KRG",
+        "fl": null,
+        "tas": null
+      },
+      {
+        "order": 5,
+        "origin": "DIKO",
+        "destination": "DIAP",
+        "route_text": "KRG BONTO G851 BKY G 851 AD",
+        "fl": null,
+        "tas": null
+      },
+      {
+        "order": 6,
+        "origin": "DIAP",
+        "destination": "DBBB",
+        "route_text": "AD ARABA ENKIT EBUSO TYE",
+        "fl": null,
+        "tas": null
+      }
+    ]
+  },
+  {
+    "name": "BÉNIN / DBBB → DNMN",
+    "category": "Bénin",
+    "legs": [
+      {
+        "order": 1,
+        "origin": "DBBB",
+        "destination": "DNMN",
+        "route_text": "TYE POLTO LAG L433 IBA R778 TEGDA MNA",
+        "fl": 90,
+        "tas": 140
+      },
+      {
+        "order": 2,
+        "origin": "DNMN",
+        "destination": "DBBB",
+        "route_text": "MNA MAGIA V377 LAG POLTO TYE",
+        "fl": 100,
+        "tas": 140
+      }
+    ]
+  },
+  {
+    "name": "BÉNIN / TOUROU → K AINJI NAFB",
+    "category": "Bénin",
+    "legs": [
+      {
+        "order": 1,
+        "origin": "TOUROU",
+        "destination": "K AINJI NAFB",
+        "route_text": "TOUROU N 9°34'45.56\" / E 3°14'7.09\" N 9°34'45.56\" / E 3°14'7.09\" K AINJI",
+        "fl": 90,
+        "tas": 140
+      },
+      {
+        "order": 2,
+        "origin": "K AINJI NAFB",
+        "destination": "TOUROU",
+        "route_text": "K AI NJI N 9°34'45.56\" / E 3°14'7.09\" N 9°34'45.56\" / E 3°14'7.09\" TOUROU",
+        "fl": 100,
+        "tas": 140
+      }
+    ]
+  },
+  {
+    "name": "BÉNIN / DBBB → DNAA",
+    "category": "Bénin",
+    "legs": [
+      {
+        "order": 1,
+        "origin": "DBBB",
+        "destination": "DNAA",
+        "route_text": "TYE POLTO LAG R778 KELI G W951 MESES ABC",
+        "fl": 90,
+        "tas": 140
+      },
+      {
+        "order": 2,
+        "origin": "DNAA",
+        "destination": "DBBB",
+        "route_text": "ABC VONUK H340 LAG POLTO TYE",
+        "fl": 100,
+        "tas": 140
+      }
+    ]
+  },
+  {
+    "name": "BÉNIN / DBBB → DNIL",
+    "category": "Bénin",
+    "legs": [
+      {
+        "order": 1,
+        "origin": "DBBB",
+        "destination": "DNIL",
+        "route_text": "TYE POLTO LAG L433 IBA ILR",
+        "fl": 90,
+        "tas": 140
+      },
+      {
+        "order": 2,
+        "origin": "DNIL",
+        "destination": "DBBB",
+        "route_text": "ILR USGUN V377 LAG POLTO TYE",
+        "fl": 100,
+        "tas": 140
+      }
+    ]
+  }
+]

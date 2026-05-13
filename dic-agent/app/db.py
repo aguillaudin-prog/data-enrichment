@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS pilot (
     name TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('CDB', 'FO')),
     rank TEXT,
+    allowed_operator TEXT,
     active INTEGER DEFAULT 1,
     UNIQUE(name, role)
 );
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS poc (
 CREATE TABLE IF NOT EXISTS route_template (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT UNIQUE NOT NULL,
+    category TEXT,
     legs_json TEXT NOT NULL
 );
 
@@ -136,9 +138,22 @@ def connect():
         conn.close()
 
 
+def _migrate(conn) -> None:
+    """Idempotent additive migrations for older DBs."""
+    cur = conn.execute("PRAGMA table_info(pilot)")
+    pilot_cols = {row[1] for row in cur.fetchall()}
+    if pilot_cols and "allowed_operator" not in pilot_cols:
+        conn.execute("ALTER TABLE pilot ADD COLUMN allowed_operator TEXT")
+    cur = conn.execute("PRAGMA table_info(route_template)")
+    tpl_cols = {row[1] for row in cur.fetchall()}
+    if tpl_cols and "category" not in tpl_cols:
+        conn.execute("ALTER TABLE route_template ADD COLUMN category TEXT")
+
+
 def init_schema() -> None:
     with connect() as c:
         c.executescript(SCHEMA)
+        _migrate(c)
 
 
 def upsert_airports(rows: Iterable[dict]) -> int:
@@ -281,27 +296,33 @@ def save_aircraft(registration: str, type_icao: str | None, callsign: str | None
         return cur.fetchone()[0]
 
 
-def list_pilots(role: str | None = None) -> list[sqlite3.Row]:
+def list_pilots(role: str | None = None, operator: str | None = None) -> list[sqlite3.Row]:
     with connect() as c:
+        sql = "SELECT * FROM pilot WHERE active = 1"
+        params: list = []
         if role:
-            return c.execute(
-                "SELECT * FROM pilot WHERE role = ? AND active = 1 ORDER BY name", (role,)
-            ).fetchall()
-        return c.execute("SELECT * FROM pilot WHERE active = 1 ORDER BY role, name").fetchall()
+            sql += " AND role = ?"
+            params.append(role)
+        if operator:
+            sql += " AND (allowed_operator IS NULL OR allowed_operator = '' OR allowed_operator = ?)"
+            params.append(operator)
+        sql += " ORDER BY role, name"
+        return c.execute(sql, params).fetchall()
 
 
-def save_pilot(name: str, role: str, rank: str | None = None) -> int:
+def save_pilot(name: str, role: str, rank: str | None = None, allowed_operator: str | None = None) -> int:
     if role not in ("CDB", "FO"):
         raise ValueError("role must be 'CDB' or 'FO'")
     with connect() as c:
         cur = c.execute(
             """
-            INSERT INTO pilot (name, role, rank, active)
-            VALUES (?, ?, ?, 1)
-            ON CONFLICT(name, role) DO UPDATE SET rank=excluded.rank, active=1
+            INSERT INTO pilot (name, role, rank, allowed_operator, active)
+            VALUES (?, ?, ?, ?, 1)
+            ON CONFLICT(name, role) DO UPDATE SET
+                rank=excluded.rank, allowed_operator=excluded.allowed_operator, active=1
             RETURNING id
             """,
-            (name.strip(), role, rank),
+            (name.strip(), role, rank, allowed_operator),
         )
         return cur.fetchone()[0]
 

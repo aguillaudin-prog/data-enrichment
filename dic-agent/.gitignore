@@ -27,3 +27,5 @@ out/
 # OpenAIP cached data per region
 seeds/openaip_*.json
 seeds/openaip_*.geojson
+
+# route_templates_*.json IS tracked (curated, no personal data)

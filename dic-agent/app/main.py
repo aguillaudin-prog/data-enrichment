@@ -81,10 +81,13 @@ def _aircraft_picker(key_prefix: str) -> dict:
     return {"registration": reg, "type_icao": type_icao, "callsign": callsign, "operator": operator}
 
 
-def _crew_picker(key_prefix: str) -> dict:
-    """Two independent dropdowns: CDB and FO. Pilots are mixable, not paired."""
-    cdbs = db.list_pilots(role="CDB")
-    fos = db.list_pilots(role="FO")
+def _crew_picker(key_prefix: str, operator: str | None = None) -> dict:
+    """Two independent dropdowns: CDB and FO. Pilots are mixable, not paired.
+
+    If `operator` is provided, only pilots allowed for that operator are shown.
+    """
+    cdbs = db.list_pilots(role="CDB", operator=operator)
+    fos = db.list_pilots(role="FO", operator=operator)
 
     if not cdbs and not fos:
         st.warning(
@@ -305,9 +308,10 @@ with tab_mission:
     st.divider()
     st.subheader("Appareil")
     ap = _aircraft_picker("mission")
+    selected_operator = ap.get("operator") or None
     st.divider()
     st.subheader("Équipage")
-    crew = _crew_picker("mission")
+    crew = _crew_picker("mission", operator=selected_operator)
     st.divider()
     st.subheader("POC")
     poc = _poc_picker("mission")
@@ -371,18 +375,28 @@ with tab_mission:
 with tab_legs:
     tpl_rows = db.list_route_templates()
     if tpl_rows:
-        tpl_options = ["— pas de template —"] + [r["name"] for r in tpl_rows]
+        # Group by category
+        by_cat: dict[str, list] = {}
+        for r in tpl_rows:
+            cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
+            by_cat.setdefault(cat, []).append(r)
+        cats = sorted(by_cat.keys())
+        cat_sel = st.selectbox("Catégorie", ["— toutes —"] + cats, key="tpl_cat")
+        filtered = tpl_rows if cat_sel == "— toutes —" else by_cat.get(cat_sel, [])
+        tpl_options = ["— pas de template —"] + [r["name"] for r in filtered]
         sel_tpl = st.selectbox(
             "Recharger une mission depuis la bibliothèque", tpl_options, key="tpl_sel",
-            help="Routes validées importées depuis tes DIC passées (python -m app.dic_importer)",
+            help="Routes validées importées depuis tes DIC passées (python -m app.seed_profiles)",
         )
         if sel_tpl != "— pas de template —":
             if st.button(f"📥 Charger '{sel_tpl}'", key="tpl_load"):
-                tpl = next(r for r in tpl_rows if r["name"] == sel_tpl)
+                tpl = next(r for r in filtered if r["name"] == sel_tpl)
                 payload = json.loads(tpl["legs_json"])
+                # Templates may be stored either as {legs: [...]} or as a bare list of legs.
+                legs_data = payload.get("legs") if isinstance(payload, dict) else payload
                 base_date = dt.date.today()
                 st.session_state.legs = []
-                for li, leg_data in enumerate(payload.get("legs", [])):
+                for li, leg_data in enumerate(legs_data or []):
                     st.session_state.legs.append({
                         "origin": leg_data.get("origin") or "",
                         "destination": leg_data.get("destination") or "",
@@ -392,7 +406,7 @@ with tab_legs:
                         "eobt_time": dt.time(6 + li * 2, 0),
                         "route_text": leg_data.get("route_text") or "",
                     })
-                st.success(f"{len(payload.get('legs', []))} legs chargés depuis '{sel_tpl}'. Édite et regénère.")
+                st.success(f"{len(legs_data or [])} legs chargés depuis '{sel_tpl}'. Édite et regénère.")
                 st.rerun()
 
     if st.button("➕ Ajouter un leg"):
