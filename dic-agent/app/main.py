@@ -432,6 +432,13 @@ with tab_mission:
 
 _NEW_MISSION_LABEL = "✨ Nouvelle mission"
 
+# Operator → home dossier mapping. Auto-saved templates use this to decide
+# in which folder to file a new mission, regardless of where the route flies.
+# Extend as more operators come on board.
+OPERATOR_FOLDER = {
+    "AMAZONE AIRLINES / DYNAMI AVIATION OPS": "Bénin",
+}
+
 
 def _apply_template(tpl_name: str, filtered_templates: list) -> None:
     """Populate st.session_state.legs from a template. Bumps the legs sid so
@@ -657,8 +664,13 @@ with tab_preview:
             # Auto-save the current mission as a route_template so the library
             # grows naturally with use. Folder = country ISO of the very first
             # leg's origin, or 'Divers' if unknown.
-            origin_iso = _resolve_country_for_airport(st.session_state.legs[0]["origin"])
-            folder = origin_iso or "Divers"
+            # Dossier de classement : on suit l'opérateur d'abord (sa base
+            # opérationnelle), avec fallback sur le code pays de l'origine.
+            operator = (mission.get("operator") or "").strip()
+            folder = OPERATOR_FOLDER.get(operator)
+            if not folder:
+                origin_iso = _resolve_country_for_airport(st.session_state.legs[0]["origin"])
+                folder = origin_iso or "Divers"
             sanitised_legs = [
                 {
                     "order": i + 1,

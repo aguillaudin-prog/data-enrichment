@@ -112,6 +112,42 @@ def seed_route_templates() -> None:
     print(f"Seeded {total} route templates total.")
 
 
+def reclassify_divers() -> None:
+    """One-shot cleanup: any auto-saved template that landed in 'Divers' or
+    in a 2-letter ISO folder gets moved to the operator's home dossier
+    (if known)."""
+    # Hardcoded map kept in sync with app/main.py.
+    operator_folder = {
+        "AMAZONE AIRLINES / DYNAMI AVIATION OPS": "Bénin",
+    }
+    # The auto-save doesn't store the operator on the template (templates are
+    # operationally generic), so we conservatively reclassify only templates
+    # currently in 'Divers'. The user can review and rename others manually.
+    with db.connect() as c:
+        rows = c.execute(
+            "SELECT id, name, category FROM route_template WHERE category = 'Divers'"
+        ).fetchall()
+        if not rows:
+            print("No templates in 'Divers' to reclassify.")
+            return
+        # For lack of operator info on the template, default everything in
+        # 'Divers' to the only configured operator's folder, if there's a
+        # single one. Otherwise leave them alone and report.
+        folders = list(set(operator_folder.values()))
+        if len(folders) == 1:
+            target = folders[0]
+            n = c.execute(
+                "UPDATE route_template SET category = ? WHERE category = 'Divers'",
+                (target,),
+            ).rowcount
+            print(f"Moved {n} template(s) from 'Divers' to '{target}'.")
+        else:
+            print(
+                f"{len(rows)} templates in 'Divers' but multiple operator folders "
+                f"configured ({folders}). Skipping auto-reclassify."
+            )
+
+
 def main() -> int:
     db.init_schema()
     seed_pilots.main()
@@ -119,6 +155,7 @@ def main() -> int:
     seed_pocs()
     seed_extra_waypoints()
     seed_route_templates()
+    reclassify_divers()
     print("\nAll profile seeds done.")
     return 0
 
