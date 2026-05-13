@@ -17,3 +17,13 @@ __pycache__/
 *.pyc
 .venv/
 out/
+
+# Secrets — JAMAIS commiter
+.env
+.env.local
+*.key
+*.pem
+
+# OpenAIP cached data per region
+seeds/openaip_*.json
+seeds/openaip_*.geojson
