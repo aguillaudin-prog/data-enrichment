@@ -592,9 +592,12 @@ with tab_preview:
                 st.warning(w)
                 all_warnings.append(w)
 
-        for p in resolution.points:
-            if p.missing:
-                _missing_point_form(p.label, key=f"miss_{i}_{p.label}")
+        seen_missing: dict[str, int] = {}
+        for pidx, p in enumerate(resolution.points):
+            if not p.missing:
+                continue
+            seen_missing[p.label] = seen_missing.get(p.label, 0) + 1
+            _missing_point_form(p.label, key=f"miss_{i}_{pidx}_{seen_missing[p.label]}_{p.label}")
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Distance", f"{resolution.total_distance_nm:.0f} NM")

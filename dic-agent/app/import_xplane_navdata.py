@@ -143,6 +143,88 @@ def import_navaids(path: Path) -> int:
     return total
 
 
+def _is_int(s: str) -> bool:
+    try:
+        int(s)
+        return True
+    except ValueError:
+        return False
+
+
+def _parse_awy_line(parts: list[str]) -> dict | None:
+    """Robust earth_awy.dat parser.
+
+    The format has varied across X-Plane versions (1100, 1101, 1200…). To stay
+    independent of the exact field count, we anchor from BOTH ends:
+
+      <from_id> <from_terminal?> <from_subregion?> <from_type>  …  <to_id> <to_terminal?> <to_subregion?> <to_type>  <direction> <base_fl> <top_fl> <name>
+
+    Right side is the fixed tail. The last field is the airway name (or a
+    'name1-name2' multi-airway string). top_fl and base_fl are integers
+    immediately before, then direction (1 or 2). to_type is the integer
+    before direction. from_id is parts[0]; from_type is the FIRST integer in
+    parts[1:]; to_id is the token RIGHT AFTER from_type.
+    """
+    if len(parts) < 8:
+        return None
+    # 4 tail tokens: direction, base_fl, top_fl, name
+    name_token = parts[-1].strip().upper()
+    if not name_token:
+        return None
+    try:
+        top_fl = int(parts[-2])
+    except ValueError:
+        return None
+    try:
+        base_fl = int(parts[-3])
+    except ValueError:
+        return None
+    direction_tok = parts[-4]
+    try:
+        direction = int(direction_tok)
+    except ValueError:
+        # Some formats use a letter (e.g. 'J', 'V'). Default to bidirectional.
+        direction = 1
+
+    from_id = parts[0].strip().upper()
+    # Locate from_type (first integer in parts[1:end-4])
+    middle = parts[1:-4]
+    from_type_idx_in_middle: int | None = None
+    for i, tok in enumerate(middle):
+        if _is_int(tok):
+            from_type_idx_in_middle = i
+            break
+    if from_type_idx_in_middle is None:
+        return None
+    # Region(s) are between from_id and from_type
+    from_region_tokens = middle[:from_type_idx_in_middle]
+    from_region = ""
+    for t in from_region_tokens:
+        if len(t) == 2 and t.isalpha():
+            from_region = t.upper()
+            break
+    # to_id is the next non-empty token after from_type
+    after_from_type = middle[from_type_idx_in_middle + 1:]
+    if not after_from_type:
+        return None
+    to_id = after_from_type[0].strip().upper()
+    # to_type is the first integer after to_id
+    to_region = ""
+    for t in after_from_type[1:]:
+        if _is_int(t):
+            break
+        if len(t) == 2 and t.isalpha():
+            to_region = t.upper()
+            break
+
+    return {
+        "from_id": from_id, "from_region": from_region,
+        "to_id": to_id, "to_region": to_region,
+        "direction": direction, "fl_min": base_fl, "fl_max": top_fl,
+        "name": name_token,
+    }
+
+
 def import_airways(path: Path) -> int:
     """Parse earth_awy.dat. Upserts every airway segment.
 
@@ -155,36 +237,23 @@ def import_airways(path: Path) -> int:
             if not _is_data_line(raw):
                 continue
             parts = raw.split()
-            if len(parts) < 10:
+            parsed = _parse_awy_line(parts)
+            if parsed is None:
                 continue
-            from_id = parts[0].strip().upper()
-            from_reg = parts[1].strip().upper() if len(parts[1]) == 2 else ""
-            # parts[2] = from_type (kind code)
-            to_id = parts[3].strip().upper()
-            to_reg = parts[4].strip().upper() if len(parts[4]) == 2 else ""
-            # parts[5] = to_type
-            try:
-                direction = int(parts[6])
-            except ValueError:
-                direction = 1
-            try:
-                fl_min = int(parts[7])
-            except ValueError:
-                fl_min = None
-            try:
-                fl_max = int(parts[8])
-            except ValueError:
-                fl_max = None
-            airway_names = " ".join(parts[9:]).strip()
             # Multi-airway syntax: 'UA601-UN857-Q42' → one row per name
-            for awy in airway_names.split("-"):
+            for awy in parsed["name"].split("-"):
                 awy = awy.strip().upper()
                 if not awy:
                     continue
+                # Sanity check: airway names look like 1-2 letters + digits.
+                # Reject pure-numeric values that leak from malformed lines.
+                if awy.isdigit():
+                    continue
                 rows.append({
-                    "from_ident": from_id, "from_region": from_reg,
-                    "to_ident": to_id, "to_region": to_reg,
-                    "direction": direction, "fl_min": fl_min, "fl_max": fl_max,
+                    "from_ident": parsed["from_id"], "from_region": parsed["from_region"],
+                    "to_ident": parsed["to_id"], "to_region": parsed["to_region"],
+                    "direction": parsed["direction"],
+                    "fl_min": parsed["fl_min"], "fl_max": parsed["fl_max"],
                     "airway_name": awy,
                 })
             if len(rows) >= 5000:
@@ -200,6 +269,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fixes", type=Path)
     ap.add_argument("--navaids", type=Path)
     ap.add_argument("--airways", type=Path)
+    ap.add_argument(
+        "--clean-first", action="store_true",
+        help="Drop all rows from airway_segment before importing. Use when a previous "
+             "buggy import left corrupted airway names (e.g. pure-digit names).",
+    )
     args = ap.parse_args(argv)
 
     fixes_path = args.fixes or (args.dir / "earth_fix.dat" if args.dir else None)
@@ -211,6 +285,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     db.init_schema()
+
+    if args.clean_first:
+        with db.connect() as c:
+            n = c.execute("DELETE FROM airway_segment").rowcount
+        print(f"Cleaned {n} existing airway_segment rows.")
 
     if fixes_path and fixes_path.exists():
         print(f"→ Importing fixes from {fixes_path}…")
