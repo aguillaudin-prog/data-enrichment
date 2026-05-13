@@ -10,7 +10,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from app import db, docx_generator, route_engine
+from app import db, docx_generator, fpl_exporter, route_engine, route_suggester
 
 st.set_page_config(page_title="DIC Agent", layout="wide")
 
@@ -198,11 +198,35 @@ def _leg_editor(idx: int, leg: dict) -> dict:
         )
     eobt = dt.datetime.combine(d, t).replace(tzinfo=dt.timezone.utc)
 
-    route_text = st.text_input(
-        "Route texte ICAO (ex. `TYE POLTO LAG L433 IBA R778 TEGDA MNA`)",
-        value=leg.get("route_text", ""),
-        key=f"leg_{idx}_route",
-    )
+    rc1, rc2 = st.columns([5, 1])
+    with rc1:
+        route_text = st.text_input(
+            "Route texte ICAO (ex. `TYE POLTO LAG L433 IBA R778 TEGDA MNA`)",
+            value=leg.get("route_text", ""),
+            key=f"leg_{idx}_route",
+        )
+    with rc2:
+        st.write("")
+        st.write("")
+        if st.button("✨ Suggérer", key=f"leg_{idx}_suggest", help="A* sur les NAVAID dans le corridor"):
+            if origin and destination:
+                with st.spinner("Calcul A*…"):
+                    sug = route_suggester.suggest_route(origin, destination)
+                if sug.waypoints and sug.distance_nm > 0:
+                    st.session_state[f"leg_{idx}_suggested"] = sug.route_text
+                    st.success(
+                        f"Route suggérée : `{sug.route_text}` ({sug.distance_nm:.0f} NM, "
+                        f"{sug.nodes_explored} nœuds explorés)"
+                    )
+                    for w in sug.warnings:
+                        st.warning(w)
+                else:
+                    st.error("Pas de route trouvée — vérifie les ICAO d'origine/destination.")
+
+    # Apply suggestion if user clicked the button (forces an input value update)
+    suggested = st.session_state.pop(f"leg_{idx}_suggested", None)
+    if suggested:
+        route_text = suggested
 
     return {
         "origin": origin,
@@ -338,6 +362,32 @@ with tab_mission:
 
 
 with tab_legs:
+    tpl_rows = db.list_route_templates()
+    if tpl_rows:
+        tpl_options = ["— pas de template —"] + [r["name"] for r in tpl_rows]
+        sel_tpl = st.selectbox(
+            "Recharger une mission depuis la bibliothèque", tpl_options, key="tpl_sel",
+            help="Routes validées importées depuis tes DIC passées (python -m app.dic_importer)",
+        )
+        if sel_tpl != "— pas de template —":
+            if st.button(f"📥 Charger '{sel_tpl}'", key="tpl_load"):
+                tpl = next(r for r in tpl_rows if r["name"] == sel_tpl)
+                payload = json.loads(tpl["legs_json"])
+                base_date = dt.date.today()
+                st.session_state.legs = []
+                for li, leg_data in enumerate(payload.get("legs", [])):
+                    st.session_state.legs.append({
+                        "origin": leg_data.get("origin") or "",
+                        "destination": leg_data.get("destination") or "",
+                        "fl": leg_data.get("fl") or 90,
+                        "tas": leg_data.get("tas") or 140,
+                        "date": base_date,
+                        "eobt_time": dt.time(6 + li * 2, 0),
+                        "route_text": leg_data.get("route_text") or "",
+                    })
+                st.success(f"{len(payload.get('legs', []))} legs chargés depuis '{sel_tpl}'. Édite et regénère.")
+                st.rerun()
+
     if st.button("➕ Ajouter un leg"):
         st.session_state.legs.append(
             {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
@@ -429,20 +479,70 @@ with tab_preview:
             )
 
     st.divider()
-    if st.button("📄 Générer DIC .docx", type="primary"):
-        if all_warnings:
-            st.warning("Des warnings subsistent — le doc sera généré mais à vérifier.")
-        data = docx_generator.build_dic_document(mission, leg_payloads)
-        fn_parts = [
-            "DIC",
-            (mission.get("registration") or "").replace("/", "-"),
-            "_".join(departures + destinations[-1:]),
-            (mission.get("amendment") or "V1"),
-        ]
-        filename = "_".join(p for p in fn_parts if p) + ".docx"
-        st.download_button(
-            "⬇️ Télécharger",
-            data=data,
-            file_name=filename,
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )
+    bc1, bc2 = st.columns(2)
+    with bc1:
+        if st.button("📄 Générer DIC .docx", type="primary"):
+            if all_warnings:
+                st.warning("Des warnings subsistent — le doc sera généré mais à vérifier.")
+            data = docx_generator.build_dic_document(mission, leg_payloads)
+            fn_parts = [
+                "DIC",
+                (mission.get("registration") or "").replace("/", "-"),
+                "_".join(departures + destinations[-1:]),
+                (mission.get("amendment") or "V1"),
+            ]
+            filename = "_".join(p for p in fn_parts if p) + ".docx"
+            st.download_button(
+                "⬇️ Télécharger DIC",
+                data=data,
+                file_name=filename,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+
+    with bc2:
+        if st.button("✈️ Générer FPL ICAO (1 par leg)"):
+            fpls: list[str] = []
+            for i, leg in enumerate(st.session_state.legs):
+                if not leg.get("origin") or not leg.get("destination"):
+                    continue
+                eet_min = int(
+                    route_engine.compute_leg(
+                        eobt=leg["eobt"], origin_icao=leg["origin"],
+                        destination_icao=leg["destination"], route_text=leg["route_text"],
+                        fl=leg["fl"], tas_kt=leg["tas"], country_index=idx,
+                    ).total_time_min
+                )
+                ap_type = (mission.get("aircraft_count_type") or "").replace("1", "").strip()
+                wake = "L"
+                if ap_type:
+                    types = db.list_aircraft_types(ap_type)
+                    if types and types[0]["wake_category"]:
+                        wake = types[0]["wake_category"]
+                altn_codes = []
+                for tok in (mission.get("alternates") or "").split("/"):
+                    m = __import__("re").search(r"\b([A-Z]{4})\b", tok.upper())
+                    if m:
+                        altn_codes.append(m.group(1))
+                fpl = fpl_exporter.fpl_for_leg(
+                    callsign=(mission.get("callsign") or "").replace("-", "") or "ZZZZZ",
+                    aircraft_type=ap_type or "ZZZZ",
+                    registration=mission.get("registration") or "",
+                    operator=mission.get("operator") or "",
+                    wake_category=wake,
+                    dep=leg["origin"], dest=leg["destination"],
+                    eobt=leg["eobt"], tas_kt=leg["tas"], fl=leg["fl"],
+                    route_text=leg["route_text"] or "DCT",
+                    eet_min=eet_min,
+                    alternates=altn_codes,
+                    remarks=mission.get("purpose"),
+                    sts="PROTECTED" if mission.get("vip_flag") else None,
+                )
+                fpls.append(f"# Leg {i + 1}: {leg['origin']} → {leg['destination']}\n{fpl}\n")
+            full_text = "\n".join(fpls)
+            st.code(full_text, language="text")
+            st.download_button(
+                "⬇️ Télécharger FPL.txt",
+                data=full_text,
+                file_name="FPL_" + (mission.get("registration") or "mission").replace("/", "-") + ".txt",
+                mime="text/plain",
+            )
