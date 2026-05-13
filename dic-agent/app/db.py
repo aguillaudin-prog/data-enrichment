@@ -118,6 +118,21 @@ CREATE TABLE IF NOT EXISTS country (
     name_fr TEXT,
     geom_geojson TEXT
 );
+
+CREATE TABLE IF NOT EXISTS airway_segment (
+    from_ident TEXT NOT NULL,
+    from_region TEXT,
+    to_ident TEXT NOT NULL,
+    to_region TEXT,
+    direction INTEGER NOT NULL DEFAULT 1,  -- 1 = both directions, 2 = from→to only
+    fl_min INTEGER,
+    fl_max INTEGER,
+    airway_name TEXT NOT NULL,
+    PRIMARY KEY (from_ident, from_region, to_ident, to_region, airway_name)
+);
+CREATE INDEX IF NOT EXISTS idx_awy_from ON airway_segment(from_ident);
+CREATE INDEX IF NOT EXISTS idx_awy_to ON airway_segment(to_ident);
+CREATE INDEX IF NOT EXISTS idx_awy_name ON airway_segment(airway_name);
 """
 
 
@@ -399,6 +414,53 @@ def save_user_waypoint(ident: str, lat: float, lon: float, region: str | None = 
             """,
             (ident.strip().upper(), region or "", lat, lon, kind),
         )
+
+
+def upsert_airway_segments(rows: Iterable[dict]) -> int:
+    sql = """
+    INSERT INTO airway_segment (from_ident, from_region, to_ident, to_region, direction, fl_min, fl_max, airway_name)
+    VALUES (:from_ident, :from_region, :to_ident, :to_region, :direction, :fl_min, :fl_max, :airway_name)
+    ON CONFLICT(from_ident, from_region, to_ident, to_region, airway_name) DO UPDATE SET
+        direction=excluded.direction, fl_min=excluded.fl_min, fl_max=excluded.fl_max
+    """
+    n = 0
+    with connect() as c:
+        for r in rows:
+            c.execute(sql, r)
+            n += 1
+    return n
+
+
+def airway_segments_for(ident: str) -> list[sqlite3.Row]:
+    """Return all airway segments incident to a given waypoint ident."""
+    with connect() as c:
+        return c.execute(
+            "SELECT * FROM airway_segment WHERE from_ident = ? OR to_ident = ?",
+            (ident.strip().upper(), ident.strip().upper()),
+        ).fetchall()
+
+
+def count_airway_segments() -> int:
+    with connect() as c:
+        return c.execute("SELECT COUNT(*) FROM airway_segment").fetchone()[0]
+
+
+def airway_segments_in_bbox(lat_min: float, lat_max: float, lon_min: float, lon_max: float) -> list[sqlite3.Row]:
+    """Return segments where both endpoints fall in the lat/lon bounding box."""
+    with connect() as c:
+        return c.execute(
+            """
+            SELECT s.*, w1.lat AS from_lat, w1.lon AS from_lon, w2.lat AS to_lat, w2.lon AS to_lon
+            FROM airway_segment s
+            JOIN waypoint w1 ON w1.ident = s.from_ident
+                AND (w1.region = COALESCE(s.from_region, '') OR s.from_region IS NULL OR s.from_region = '')
+            JOIN waypoint w2 ON w2.ident = s.to_ident
+                AND (w2.region = COALESCE(s.to_region, '') OR s.to_region IS NULL OR s.to_region = '')
+            WHERE w1.lat BETWEEN ? AND ? AND w1.lon BETWEEN ? AND ?
+              AND w2.lat BETWEEN ? AND ? AND w2.lon BETWEEN ? AND ?
+            """,
+            (lat_min, lat_max, lon_min, lon_max, lat_min, lat_max, lon_min, lon_max),
+        ).fetchall()
 
 
 def save_user_airport(icao: str, name: str, country_iso: str, lat: float, lon: float, is_military: bool = True) -> None:

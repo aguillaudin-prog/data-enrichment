@@ -34,8 +34,40 @@ streamlit run app/main.py
 - **Types d'avions** : ~250 types ICAO courants (militaire + civil) avec cruise TAS, ceiling, range. Extensible par l'utilisateur dans l'UI.
 - **Waypoints / NAVAID** : OurAirports `navaids.csv` (~30 000 entrées). Tout point inconnu peut être ajouté à la volée (saisie nom + lat/lon, persisté).
 - **Frontières d'États** : Natural Earth Admin-0 `ne_50m_admin_0_countries`.
+- **Airways IFR mondial** (optionnel, mais fortement recommandé pour des routes
+  suggérées de qualité production) : X-Plane navdata, voir ci-dessous.
 
 Les fichiers sources sont téléchargés au premier `seed_db` (voir `seeds/`).
+
+### Routes IFR avec airways nommés (X-Plane navdata)
+
+Sans ce dataset, le suggester chaîne des waypoints en DCT (`WPT1 DCT WPT2 DCT WPT3`).
+Avec, il produit des routes IFR conformes (`EBUSO UA601 ENKIT UA601 ARABA`),
+directement déposables dans un FPL et acceptées par les outils IFR (RocketRoute,
+IFPS, etc.).
+
+Trois fichiers à fournir, normalement extraits d'une installation X-Plane :
+
+| Fichier | Contenu | Taille |
+|---|---|---|
+| `earth_fix.dat` | ~280 000 fixes RNAV mondial | ~12 Mo |
+| `earth_nav.dat` | ~30 000 VOR/NDB/DME | ~5 Mo |
+| `earth_awy.dat` | ~80 000 segments d'airway | ~7 Mo |
+
+Sources possibles :
+- **Installation X-Plane 11/12** : copie `Resources/default data/earth_*.dat`
+  (ou `Custom Data/earth_*.dat` si tu as un cycle AIRAC plus récent).
+- **Miroirs communautaires** : chercher 'X-Plane earth_awy.dat' sur GitHub.
+  L'AIRAC cycle est indiqué dans l'en-tête du fichier (commentaire `1100 Version...`).
+
+Une fois les fichiers récupérés dans un dossier `~/xplane_navdata/` :
+
+```bash
+python -m app.import_xplane_navdata --dir ~/xplane_navdata/
+```
+
+≈ 1-2 min d'import. À refaire à chaque cycle AIRAC (28 jours) si tu veux rester
+à jour.
 
 ## Structure
 

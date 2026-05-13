@@ -1,24 +1,28 @@
-"""Route suggestion via A* on a graph of NAVAIDs/fixes in a corridor.
+"""Route suggestion via A*.
 
-Approach (free-data only):
-  - Nodes : every waypoint within `corridor_nm` of the great-circle origin→dest line.
-  - Edges : each node connected to its K nearest neighbours (Euclidean ≈ great circle
-            for typical leg lengths). Edge cost = great-circle distance in NM.
-  - Heuristic : great-circle distance from current node to destination.
+Two strategies, picked automatically:
 
-OpenAIP airspace penalties are added on top (function `inflate_with_airspaces`) when
-the user has fetched OpenAIP data for the leg's region. They multiply edges that
-cross prohibited/restricted/danger areas at the requested FL.
+1. **Airway-aware** (when `airway_segment` table is populated, typically after
+   `python -m app.import_xplane_navdata`). The graph is built from real
+   airway segments; A* picks the shortest sequence of named airways
+   between origin and destination. Output looks like
+   `EBUSO UA601 ARABA UA602 ABC` — direct-deposit-able in an FPL.
 
-This is NOT real IFR routing — there is no airway connectivity. The output is a
-plausible draft that the user reviews, edits, then validates.
+2. **Corridor DCT fallback** (no airway data). The graph is built from
+   NAVAIDs along the great-circle corridor, connected by k-nearest
+   neighbours. Output is `WPT1 DCT WPT2 DCT WPT3` — unambiguous for IFR
+   parsers, but only a starting point for an OPS officer.
+
+OpenAIP airspace penalties (P/R/D zones at the requested FL) are applied
+on top of either strategy, as long as the airspaces were cached via
+`python -m app.openaip_world` or `python -m app.openaip_client <ISO>`.
 """
 from __future__ import annotations
 
 import heapq
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
@@ -34,26 +38,38 @@ EARTH_NM = 3440.065
 class SuggestedRoute:
     origin: str
     destination: str
-    waypoints: list[str]
-    distance_nm: float
-    nodes_explored: int
-    warnings: list[str]
+    waypoints: list[str]                     # full path: origin, ..., destination
+    edge_labels: list[str] = field(default_factory=list)  # len = len(waypoints) - 1
+    distance_nm: float = 0.0
+    nodes_explored: int = 0
+    strategy: str = "dct"                    # 'airway' or 'dct'
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def route_text(self) -> str:
-        """Render the suggested route as an FPL-conformant string.
+        """Render FPL field 15 ROUTE.
 
-        Origin and destination are excluded. Consecutive waypoints are
-        joined with explicit `DCT` so IFR planning systems can't mistake
-        a 2-letter waypoint ident for an airway code (the cause of the
-        'Airway TL does not exist between PAM and BNA' RocketRoute error).
-        For zero intermediate waypoints we emit `DCT` — caller knows it
-        means 'direct, no airway routing yet, an OPS officer must refine'.
+        Convention: inner waypoints separated by airway names (or 'DCT' when
+        no airway link). Origin and destination are dropped, but the airway
+        used to JOIN consecutive inner points is preserved.
+
+        Examples:
+          [DBBB, EBUSO, ARABA, ABC, DNAA] + edges [DCT, UA601, UA602, DCT]
+            → 'EBUSO UA601 ARABA UA602 ABC'
+          [DBBB, DXXX] + edges [DCT]
+            → 'DCT'
         """
         inner = self.waypoints[1:-1]
         if not inner:
             return "DCT"
-        return " DCT ".join(inner)
+        # edges between inner waypoints are edge_labels[1:-1]
+        joins = self.edge_labels[1:-1] if len(self.edge_labels) >= 2 else []
+        parts: list[str] = [inner[0]]
+        for i, wpt in enumerate(inner[1:]):
+            edge = joins[i] if i < len(joins) else "DCT"
+            parts.append(edge)
+            parts.append(wpt)
+        return " ".join(parts)
 
 
 def _airport_point(icao: str) -> tuple[str, float, float] | None:
@@ -63,62 +79,117 @@ def _airport_point(icao: str) -> tuple[str, float, float] | None:
     return (ap["icao"], ap["lat"], ap["lon"])
 
 
-def _candidate_waypoints(
-    origin_pt: tuple[float, float],
-    dest_pt: tuple[float, float],
-    corridor_nm: float = 100.0,
-    max_candidates: int = 4000,
-) -> list[dict]:
-    """Return waypoints whose perpendicular distance to the great-circle line
-    (approximated linearly) is within `corridor_nm`. Cheap and sufficient for
-    legs up to ~2000 NM. For longer flights, we still cap at `max_candidates`
-    nearest-to-line points."""
-    lat1, lon1 = origin_pt
-    lat2, lon2 = dest_pt
-    leg_nm = _great_circle_nm(origin_pt, dest_pt)
+# ─── Strategy 1 : airway-aware A* ──────────────────────────────────────────────
 
-    # Bounding box around the great circle, with a margin of corridor_nm (≈ 1.6° lat).
-    lat_min = min(lat1, lat2) - corridor_nm / 60
-    lat_max = max(lat1, lat2) + corridor_nm / 60
-    # lon margin scaled by latitude
+def _build_airway_graph(
+    origin: tuple[float, float],
+    destination: tuple[float, float],
+    bbox_margin_nm: float = 200.0,
+    fl: int | None = None,
+) -> tuple[dict[str, tuple[float, float]], dict[str, list[tuple[str, float, str]]]]:
+    """Pull every airway segment in the lat/lon bounding box of the great
+    circle and build a graph: node = waypoint ident, edge = airway segment.
+
+    Returns (nodes, adj). adj[u] = [(v, distance_nm, airway_name), …].
+    """
+    lat_min = min(origin[0], destination[0]) - bbox_margin_nm / 60
+    lat_max = max(origin[0], destination[0]) + bbox_margin_nm / 60
     cos_lat = math.cos(math.radians((lat_min + lat_max) / 2))
-    lon_margin = corridor_nm / 60 / max(cos_lat, 0.1)
-    lon_min = min(lon1, lon2) - lon_margin
-    lon_max = max(lon1, lon2) + lon_margin
+    lon_margin = bbox_margin_nm / 60 / max(cos_lat, 0.1)
+    lon_min = min(origin[1], destination[1]) - lon_margin
+    lon_max = max(origin[1], destination[1]) + lon_margin
 
-    with db.connect() as c:
-        rows = c.execute(
-            """
-            SELECT ident, region, lat, lon, kind FROM waypoint
-            WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
-            """,
-            (lat_min, lat_max, lon_min, lon_max),
-        ).fetchall()
+    segs = db.airway_segments_in_bbox(lat_min, lat_max, lon_min, lon_max)
 
-    # Compute perpendicular distance ≈ cross-track distance.
-    def _xtrack_nm(p):
-        # Great-circle cross-track distance
-        lat3, lon3 = p[2], p[3]
-        d13 = _great_circle_nm(origin_pt, (lat3, lon3))
-        brng13 = _bearing(origin_pt, (lat3, lon3))
-        brng12 = _bearing(origin_pt, dest_pt)
-        xt = math.asin(math.sin(d13 / EARTH_NM) * math.sin(math.radians(brng13 - brng12))) * EARTH_NM
-        return abs(xt)
+    nodes: dict[str, tuple[float, float]] = {}
+    adj: dict[str, list[tuple[str, float, str]]] = {}
+    for s in segs:
+        # Respect altitude band if the leg's FL is known.
+        if fl is not None and s["fl_min"] is not None and s["fl_max"] is not None:
+            if not (s["fl_min"] <= fl <= s["fl_max"]):
+                continue
+        u, v = s["from_ident"], s["to_ident"]
+        nodes.setdefault(u, (s["from_lat"], s["from_lon"]))
+        nodes.setdefault(v, (s["to_lat"], s["to_lon"]))
+        d = _great_circle_nm(nodes[u], nodes[v])
+        awy = s["airway_name"]
+        adj.setdefault(u, []).append((v, d, awy))
+        if s["direction"] == 1:
+            adj.setdefault(v, []).append((u, d, awy))
+    return nodes, adj
 
-    scored = []
-    for r in rows:
-        try:
-            xt = _xtrack_nm((r["ident"], r["region"], r["lat"], r["lon"]))
-        except (ValueError, ZeroDivisionError):
+
+def _connect_airport_to_graph(
+    label: str,
+    pt: tuple[float, float],
+    nodes: dict[str, tuple[float, float]],
+    adj: dict[str, list[tuple[str, float, str]]],
+    k: int = 5,
+    max_link_nm: float = 200.0,
+) -> None:
+    """Add the airport as a node, link it via DCT to its k nearest neighbours
+    in the airway graph."""
+    if not nodes:
+        nodes[label] = pt
+        adj[label] = []
+        return
+    nodes[label] = pt
+    dists: list[tuple[float, str]] = []
+    for n, p in nodes.items():
+        if n == label:
             continue
-        if xt <= corridor_nm:
-            scored.append((xt, r))
-    scored.sort(key=lambda x: x[0])
-    return [dict(r) for _, r in scored[:max_candidates]]
+        d = _great_circle_nm(pt, p)
+        if d <= max_link_nm:
+            dists.append((d, n))
+    dists.sort()
+    adj[label] = []
+    for d, n in dists[:k]:
+        adj[label].append((n, d * 1.2, "DCT"))  # +20% to prefer real airways
+        adj.setdefault(n, []).append((label, d * 1.2, "DCT"))
+
+
+def _astar_labeled(
+    nodes: dict[str, tuple[float, float]],
+    adj: dict[str, list[tuple[str, float, str]]],
+    start: str,
+    goal: str,
+    edge_cost_fn=None,
+) -> tuple[list[str], list[str], float, int]:
+    """A* that also returns the airway label used on each step."""
+    h = lambda lbl: _great_circle_nm(nodes[lbl], nodes[goal])
+    open_heap: list[tuple[float, str]] = []
+    heapq.heappush(open_heap, (h(start), start))
+    came_from: dict[str, tuple[str, str]] = {}
+    g: dict[str, float] = {start: 0.0}
+    explored = 0
+    while open_heap:
+        _, cur = heapq.heappop(open_heap)
+        explored += 1
+        if cur == goal:
+            path = [cur]
+            edges: list[str] = []
+            while cur in came_from:
+                prev, label = came_from[cur]
+                path.append(prev)
+                edges.append(label)
+                cur = prev
+            return list(reversed(path)), list(reversed(edges)), g[goal], explored
+        for nbr, base_cost, awy in adj.get(cur, []):
+            cost = edge_cost_fn(cur, nbr, base_cost) if edge_cost_fn else base_cost
+            tentative = g[cur] + cost
+            if tentative < g.get(nbr, float("inf")):
+                came_from[nbr] = (cur, awy)
+                g[nbr] = tentative
+                heapq.heappush(open_heap, (tentative + h(nbr), nbr))
+    return [], [], float("inf"), explored
+
+
+# ─── Strategy 2 : corridor DCT fallback (unchanged shape, kept as fallback) ─────
+
+AIRWAY_RE = None  # not needed here, route_engine has it
 
 
 def _bearing(p1: tuple[float, float], p2: tuple[float, float]) -> float:
-    """Initial bearing from p1 to p2 in degrees."""
     lat1, lon1 = math.radians(p1[0]), math.radians(p1[1])
     lat2, lon2 = math.radians(p2[0]), math.radians(p2[1])
     dlon = lon2 - lon1
@@ -127,85 +198,60 @@ def _bearing(p1: tuple[float, float], p2: tuple[float, float]) -> float:
     return (math.degrees(math.atan2(y, x)) + 360) % 360
 
 
-def _build_graph(
-    origin: tuple[str, float, float],
-    destination: tuple[str, float, float],
-    corridor_nm: float = 100.0,
-    k_neighbours: int = 8,
-) -> tuple[dict[str, tuple[float, float]], dict[str, list[tuple[str, float]]]]:
-    """Return (nodes, adjacency). Nodes keyed by label (ICAO or waypoint ident).
+def _candidate_waypoints_in_corridor(
+    origin_pt: tuple[float, float], dest_pt: tuple[float, float],
+    corridor_nm: float = 100.0, max_candidates: int = 4000,
+) -> list[dict]:
+    lat1, lon1 = origin_pt
+    lat2, lon2 = dest_pt
+    lat_min = min(lat1, lat2) - corridor_nm / 60
+    lat_max = max(lat1, lat2) + corridor_nm / 60
+    cos_lat = math.cos(math.radians((lat_min + lat_max) / 2))
+    lon_margin = corridor_nm / 60 / max(cos_lat, 0.1)
+    lon_min = min(lon1, lon2) - lon_margin
+    lon_max = max(lon1, lon2) + lon_margin
+    with db.connect() as c:
+        rows = c.execute(
+            "SELECT ident, region, lat, lon, kind FROM waypoint "
+            "WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?",
+            (lat_min, lat_max, lon_min, lon_max),
+        ).fetchall()
 
-    Edges: each node connected to its k nearest within `corridor_nm/2`. Origin
-    and destination are always connected to their k nearest. A direct DCT edge
-    origin→destination is always added as a fallback.
-    """
+    def _xt(p):
+        lat3, lon3 = p["lat"], p["lon"]
+        d13 = _great_circle_nm(origin_pt, (lat3, lon3))
+        b13 = _bearing(origin_pt, (lat3, lon3))
+        b12 = _bearing(origin_pt, dest_pt)
+        try:
+            return abs(math.asin(math.sin(d13 / EARTH_NM) * math.sin(math.radians(b13 - b12))) * EARTH_NM)
+        except ValueError:
+            return float("inf")
+
+    scored = [(_xt(r), r) for r in rows]
+    scored = [(d, r) for d, r in scored if d <= corridor_nm and len(r["ident"]) >= 3]
+    scored.sort(key=lambda x: x[0])
+    return [dict(r) for _, r in scored[:max_candidates]]
+
+
+def _build_corridor_graph(origin, destination, corridor_nm: float, k: int):
     o_label, o_lat, o_lon = origin
     d_label, d_lat, d_lon = destination
-    cand = _candidate_waypoints((o_lat, o_lon), (d_lat, d_lon), corridor_nm=corridor_nm)
-
-    nodes: dict[str, tuple[float, float]] = {o_label: (o_lat, o_lon), d_label: (d_lat, d_lon)}
+    cand = _candidate_waypoints_in_corridor((o_lat, o_lon), (d_lat, d_lon), corridor_nm=corridor_nm)
+    nodes = {o_label: (o_lat, o_lon), d_label: (d_lat, d_lon)}
     for c in cand:
-        label = c["ident"]
-        # Deduplicate (same ident across regions): keep the one closest to track
-        if label not in nodes:
-            nodes[label] = (c["lat"], c["lon"])
-
+        nodes.setdefault(c["ident"], (c["lat"], c["lon"]))
     labels = list(nodes.keys())
     coords = [nodes[l] for l in labels]
-    adj: dict[str, list[tuple[str, float]]] = {l: [] for l in labels}
-
+    adj: dict[str, list[tuple[str, float, str]]] = {l: [] for l in labels}
     for i, li in enumerate(labels):
-        pi = coords[i]
-        # find k nearest others
-        dists: list[tuple[float, int]] = []
-        for j, lj in enumerate(labels):
-            if i == j:
-                continue
-            d = _great_circle_nm(pi, coords[j])
-            dists.append((d, j))
-        dists.sort()
-        for d, j in dists[:k_neighbours]:
-            adj[li].append((labels[j], d))
-
-    # Always include direct origin → destination (DCT) with high cost so A* prefers airways
-    direct_d = _great_circle_nm((o_lat, o_lon), (d_lat, d_lon))
-    adj[o_label].append((d_label, direct_d * 1.3))
-
+        dists = sorted([(_great_circle_nm(coords[i], coords[j]), j) for j in range(len(labels)) if i != j])
+        for d, j in dists[:k]:
+            adj[li].append((labels[j], d, "DCT"))
+    adj[o_label].append((d_label, _great_circle_nm((o_lat, o_lon), (d_lat, d_lon)) * 1.3, "DCT"))
     return nodes, adj
 
 
-def _astar(
-    nodes: dict[str, tuple[float, float]],
-    adj: dict[str, list[tuple[str, float]]],
-    start: str,
-    goal: str,
-    edge_cost_fn=None,
-) -> tuple[list[str], float, int]:
-    h_to_goal = lambda lbl: _great_circle_nm(nodes[lbl], nodes[goal])
-    open_heap: list[tuple[float, str]] = []
-    heapq.heappush(open_heap, (h_to_goal(start), start))
-    came_from: dict[str, str] = {}
-    g_score: dict[str, float] = {start: 0.0}
-    explored = 0
-    while open_heap:
-        _, current = heapq.heappop(open_heap)
-        explored += 1
-        if current == goal:
-            path = [current]
-            while current in came_from:
-                current = came_from[current]
-                path.append(current)
-            return list(reversed(path)), g_score[goal], explored
-        for nbr, base_cost in adj.get(current, []):
-            cost = edge_cost_fn(current, nbr, base_cost) if edge_cost_fn else base_cost
-            tentative = g_score[current] + cost
-            if tentative < g_score.get(nbr, float("inf")):
-                came_from[nbr] = current
-                g_score[nbr] = tentative
-                f = tentative + h_to_goal(nbr)
-                heapq.heappush(open_heap, (f, nbr))
-    return [], float("inf"), explored
-
+# ─── Public entry point ────────────────────────────────────────────────────────
 
 def suggest_route(
     origin_icao: str,
@@ -215,27 +261,19 @@ def suggest_route(
     airspace_penalties: list[dict] | None = None,
     fl: int | None = None,
 ) -> SuggestedRoute:
-    """Suggest a route between two airports.
-
-    airspace_penalties: optional list of dicts of shape:
-        {'geom_geojson': '...', 'multiplier': 10.0, 'fl_min': 0, 'fl_max': 999}
-    Any edge whose great-circle segment crosses the geometry at the given FL
-    band sees its cost multiplied.
-    """
     warnings: list[str] = []
     origin = _airport_point(origin_icao)
     if not origin:
-        return SuggestedRoute(origin_icao, destination_icao, [], 0.0, 0, [f"Origin '{origin_icao}' not in airport DB."])
+        return SuggestedRoute(origin_icao, destination_icao, [], [], 0.0, 0, "dct",
+                              [f"Origin '{origin_icao}' not in airport DB."])
     destination = _airport_point(destination_icao)
     if not destination:
-        return SuggestedRoute(origin_icao, destination_icao, [], 0.0, 0, [f"Destination '{destination_icao}' not in airport DB."])
+        return SuggestedRoute(origin_icao, destination_icao, [], [], 0.0, 0, "dct",
+                              [f"Destination '{destination_icao}' not in airport DB."])
+    o_pt = (origin[1], origin[2])
+    d_pt = (destination[1], destination[2])
 
-    nodes, adj = _build_graph(origin, destination, corridor_nm=corridor_nm, k_neighbours=k_neighbours)
-    if len(nodes) < 3:
-        warnings.append(f"Très peu de waypoints dans le corridor (±{corridor_nm:.0f} NM). Résultat = DCT.")
-
-    # Build airspace shapes once
-    geoms: list[tuple] = []  # (shape, multiplier, fl_min, fl_max)
+    geoms: list[tuple] = []
     if airspace_penalties:
         for sp in airspace_penalties:
             try:
@@ -244,13 +282,10 @@ def suggest_route(
             except Exception:
                 continue
 
-    def _edge_cost(u: str, v: str, base: float) -> float:
+    def _edge_cost(u: str, v: str, base: float, nodes: dict) -> float:
         if not geoms:
             return base
-        line = LineString([
-            (nodes[u][1], nodes[u][0]),
-            (nodes[v][1], nodes[v][0]),
-        ])
+        line = LineString([(nodes[u][1], nodes[u][0]), (nodes[v][1], nodes[v][0])])
         mult = 1.0
         for g, m, flmin, flmax in geoms:
             if fl is not None and not (flmin <= fl <= flmax):
@@ -259,59 +294,72 @@ def suggest_route(
                 mult *= m
         return base * mult
 
-    path, dist, explored = _astar(nodes, adj, origin_icao, destination_icao, edge_cost_fn=_edge_cost)
-    if not path:
-        warnings.append("A* sans solution — fallback DCT.")
-        path = [origin_icao, destination_icao]
-        dist = _great_circle_nm((origin[1], origin[2]), (destination[1], destination[2]))
+    has_airways = db.count_airway_segments() > 0
+    if has_airways:
+        nodes, adj = _build_airway_graph(o_pt, d_pt, bbox_margin_nm=max(150, corridor_nm * 1.5), fl=fl)
+        _connect_airport_to_graph(origin_icao, o_pt, nodes, adj, k=k_neighbours)
+        _connect_airport_to_graph(destination_icao, d_pt, nodes, adj, k=k_neighbours)
+        path, edges, dist, explored = _astar_labeled(
+            nodes, adj, origin_icao, destination_icao,
+            edge_cost_fn=lambda u, v, b: _edge_cost(u, v, b, nodes),
+        )
+        strategy = "airway"
+    else:
+        warnings.append("Pas de base d'airways IFR (lance `python -m app.import_xplane_navdata`). Fallback DCT.")
+        nodes, adj = _build_corridor_graph(origin, destination, corridor_nm, k_neighbours)
+        path, edges, dist, explored = _astar_labeled(
+            nodes, adj, origin_icao, destination_icao,
+            edge_cost_fn=lambda u, v, b: _edge_cost(u, v, b, nodes),
+        )
+        strategy = "dct"
 
-    # Drop intermediate waypoints that don't add information : either
-    # collocated with the origin/destination (< 15 NM), so close to the
-    # previous kept point that they collapse to noise (< 10 NM), or whose
-    # ident is 1-2 letters (would be parsed as an airway name by IFR
-    # planning systems, breaking the route syntax).
+    if not path:
+        warnings.append("A* sans solution — fallback DCT direct.")
+        path = [origin_icao, destination_icao]
+        edges = ["DCT"]
+        dist = _great_circle_nm(o_pt, d_pt)
+
+    # Cleanup: drop intermediate waypoints collocated with endpoints, with
+    # 1-2 letter idents (airway-name collision), or too close to the previous
+    # kept point. Rebuild edges consistently from the original A* labels:
+    # an edge linking two NON-adjacent kept positions is downgraded to DCT.
     if len(path) > 2:
-        o_pt = (origin[1], origin[2])
-        d_pt = (destination[1], destination[2])
-        kept: list[str] = [path[0]]
-        for label in path[1:-1]:
-            if label not in nodes:
+        keep_inner: list[int] = []
+        for i in range(1, len(path) - 1):
+            label = path[i]
+            p = nodes.get(label)
+            if p is None:
                 continue
             if len(label) < 3:
-                continue  # 1-2 letter idents look like airway codes (TL, BD, …)
-            p = nodes[label]
-            if _great_circle_nm(p, o_pt) < 15.0:
                 continue
-            if _great_circle_nm(p, d_pt) < 15.0:
+            if _great_circle_nm(p, o_pt) < 15.0 or _great_circle_nm(p, d_pt) < 15.0:
                 continue
-            prev = nodes.get(kept[-1])
-            if prev and _great_circle_nm(p, prev) < 10.0:
+            last_kept = keep_inner[-1] if keep_inner else 0  # 0 = origin
+            last_p = nodes.get(path[last_kept])
+            if last_p and _great_circle_nm(p, last_p) < 10.0:
                 continue
-            kept.append(label)
-        kept.append(path[-1])
-        path = kept
+            keep_inner.append(i)
+
+        positions = [0] + keep_inner + [len(path) - 1]
+        new_path = [path[i] for i in positions]
+        new_edges: list[str] = []
+        for k in range(len(positions) - 1):
+            a, b = positions[k], positions[k + 1]
+            if b == a + 1:
+                new_edges.append(edges[a] if a < len(edges) else "DCT")
+            else:
+                new_edges.append("DCT")  # skipped intermediates → unknown link
+        path, edges = new_path, new_edges
 
     return SuggestedRoute(
-        origin=origin_icao,
-        destination=destination_icao,
-        waypoints=path,
-        distance_nm=dist,
-        nodes_explored=explored,
-        warnings=warnings,
+        origin=origin_icao, destination=destination_icao,
+        waypoints=path, edge_labels=edges,
+        distance_nm=dist, nodes_explored=explored,
+        strategy=strategy, warnings=warnings,
     )
 
 
 def airspace_penalty_rows_for_country(country_iso2: str) -> list[dict]:
-    """Load cached OpenAIP airspaces for a country and return rows usable by
-    `suggest_route`'s `airspace_penalties` argument.
-
-    Penalty multipliers by airspace type:
-      P (prohibited)  → 100
-      R (restricted)  →  10
-      D (danger)      →   3
-      MOA/TRA/TSA     →   5
-      others          → ignored
-    """
     cache = Path(__file__).resolve().parent.parent / "seeds" / f"openaip_airspaces_{country_iso2.upper()}.json"
     if not cache.exists():
         return []
@@ -326,12 +374,11 @@ def airspace_penalty_rows_for_country(country_iso2: str) -> list[dict]:
         geom = s.get("geometry")
         if not geom:
             continue
-        # FL band from OpenAIP `upperLimit` / `lowerLimit` (when present)
         fl_min = 0
         fl_max = 999
         try:
             up = s.get("upperLimit", {})
-            if up.get("unit") == 6:  # FL
+            if up.get("unit") == 6:
                 fl_max = int(up.get("value") or fl_max)
             lo = s.get("lowerLimit", {})
             if lo.get("unit") == 6:
