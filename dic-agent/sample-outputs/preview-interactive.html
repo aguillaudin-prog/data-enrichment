@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>DIC Agent — Maquette interactive</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f5f6f8; color: #1f2937; }
+  .container { max-width: 1500px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 22px; margin: 0 0 4px 0; }
+  .subtitle { color: #6b7280; font-size: 13px; margin-bottom: 20px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: #ecfdf5; color: #047857; font-weight: 600; }
+  .pill.warn { background: #fef3c7; color: #92400e; }
+  .pill.err { background: #fee2e2; color: #991b1b; }
+
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); margin-bottom: 18px; }
+  .card header { padding: 14px 18px; border-bottom: 1px solid #e5e7eb; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .card .body { padding: 18px; }
+
+  .tabs { display: flex; gap: 0; border-bottom: 2px solid #e5e7eb; margin-bottom: 16px; }
+  .tab { padding: 10px 16px; cursor: pointer; color: #6b7280; user-select: none; font-size: 14px; }
+  .tab.active { color: #ef4444; border-bottom: 2px solid #ef4444; margin-bottom: -2px; font-weight: 600; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  label { display: block; font-size: 12px; color: #374151; margin-bottom: 4px; font-weight: 500; }
+  input, select, textarea {
+    width: 100%; border: 1px solid #d1d5db; border-radius: 6px; padding: 7px 10px;
+    font-size: 13px; background: #fff; font-family: inherit;
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid #ef4444; outline-offset: -1px; }
+  .row { display: grid; gap: 12px; margin: 12px 0; }
+  .row.r2 { grid-template-columns: 1fr 1fr; }
+  .row.r3 { grid-template-columns: 1fr 1fr 1fr; }
+  .row.r4 { grid-template-columns: 1.4fr 1.4fr 0.7fr 0.7fr; }
+  .row.r5 { grid-template-columns: repeat(5, 1fr); }
+  .checkbox { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+  button { background: #ef4444; color: white; border: none; border-radius: 6px; padding: 8px 16px; font-weight: 600; cursor: pointer; font-size: 13px; }
+  button:hover { background: #dc2626; }
+  button.secondary { background: #fff; color: #ef4444; border: 1px solid #ef4444; }
+  button.secondary:hover { background: #fef2f2; }
+  button.ghost { background: transparent; color: #6b7280; border: 1px solid #e5e7eb; }
+  .caption { font-size: 11px; color: #6b7280; margin-top: 4px; }
+  .warning { background: #fffbeb; border: 1px solid #fde68a; padding: 8px 12px; border-radius: 6px; font-size: 12px; color: #92400e; margin: 8px 0; }
+  .success { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 8px 12px; border-radius: 6px; font-size: 12px; color: #166534; margin: 8px 0; }
+  .info { background: #eff6ff; border: 1px solid #bfdbfe; padding: 8px 12px; border-radius: 6px; font-size: 12px; color: #1e40af; margin: 8px 0; }
+  .metric { display: inline-block; background: #f9fafb; padding: 10px 14px; border-radius: 8px; margin-right: 8px; min-width: 110px; vertical-align: top; }
+  .metric .num { font-size: 18px; font-weight: 700; display: block; }
+  .metric .lbl { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
+  hr { border: none; border-top: 1px solid #e5e7eb; margin: 16px 0; }
+  .section-title { font-weight: 600; font-size: 14px; margin: 12px 0 8px 0; color: #111827; }
+  .leg-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; margin-bottom: 12px; background: #fafafa; }
+  .leg-card h3 { margin: 0 0 10px 0; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
+  .token-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; margin: 2px 3px; font-family: ui-monospace, monospace; }
+  .token-chip.ok { background: #dcfce7; color: #166534; }
+  .token-chip.airway { background: #e0e7ff; color: #3730a3; }
+  .token-chip.coord { background: #fce7f3; color: #9d174d; }
+  .token-chip.miss { background: #fee2e2; color: #991b1b; }
+
+  .docx { background: #fff; padding: 28px 32px; border-radius: 8px; font-family: "Arial", sans-serif; font-size: 11px; color: #000; border: 1px solid #e5e7eb; }
+  .docx h2.title { text-align: center; font-size: 14px; font-weight: 700; margin: 4px 0; letter-spacing: 0.5px; }
+  .docx h1.title { text-align: center; font-size: 16px; font-weight: 700; margin: 4px 0 14px 0; }
+  .docx table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  .docx th, .docx td { border: 1px solid #444; padding: 4px 6px; text-align: left; vertical-align: top; line-height: 1.35; }
+  .docx th { background: #bfbfbf; font-weight: 700; text-align: center; font-size: 10px; }
+  .docx .bg-section td { background: #bfbfbf; font-weight: 700; }
+  .docx .bg-leg-head td { background: #f2f2f2; font-weight: 600; }
+  .docx .center { text-align: center; }
+  .docx td.x-cell { text-align: center; font-weight: 700; }
+  .docx .page-break { border-top: 1px dashed #9ca3af; margin: 18px 0 14px 0; text-align: center; color: #6b7280; font-size: 10px; }
+
+  details summary { cursor: pointer; font-size: 12px; color: #6b7280; padding: 6px 0; }
+  details summary:hover { color: #111827; }
+  details[open] summary { color: #111827; font-weight: 600; }
+
+  .map-svg { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; width: 100%; height: 360px; }
+  .map-svg path.country { fill: #e5e7eb; stroke: #9ca3af; stroke-width: 0.5; }
+  .map-svg path.route { fill: none; stroke: #ef4444; stroke-width: 1.8; stroke-dasharray: 4 3; }
+  .map-svg circle.point { fill: #ef4444; stroke: #fff; stroke-width: 1.5; }
+  .map-svg circle.airport { fill: #1e40af; stroke: #fff; stroke-width: 1.5; }
+  .map-svg circle.border { fill: #f59e0b; stroke: #fff; stroke-width: 1.5; }
+  .map-svg text { font-size: 9px; fill: #374151; font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div style="display: flex; justify-content: space-between; align-items: end; margin-bottom: 14px;">
+    <div>
+      <h1>🛩️ DIC Agent — Maquette interactive</h1>
+      <div class="subtitle">
+        Edits déclenchent le moteur de route en JS (grand cercle, point-in-polygon).
+        Data embarquée : aéroports + waypoints + frontières <b>Afrique de l'Ouest</b>.
+        Pour le moteur complet (mondial, génération <code>.docx</code>), il faut l'app Python.
+      </div>
+    </div>
+    <div>
+      <span class="pill">single-file HTML · 0 dépendance</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="body" style="padding-bottom: 6px;">
+      <div class="tabs">
+        <div class="tab active" data-tab="mission">1️⃣ Mission &amp; profils</div>
+        <div class="tab" data-tab="legs">2️⃣ Legs</div>
+        <div class="tab" data-tab="preview">3️⃣ Preview &amp; export</div>
+      </div>
+
+      <!-- TAB MISSION -->
+      <div class="tab-content active" id="tab-mission">
+        <div class="row r3">
+          <div>
+            <label>Reference number</label>
+            <input id="m_ref" value="MSG DU 10/04/2026">
+          </div>
+          <div>
+            <label>Amendment</label>
+            <input id="m_amendment" value="V2">
+          </div>
+          <div>
+            <label>Mission number</label>
+            <input id="m_mission_number" value="06543-26/00">
+          </div>
+        </div>
+        <hr>
+        <div class="section-title">Appareil</div>
+        <div class="row r2">
+          <div>
+            <label>Profil appareil</label>
+            <select id="m_aircraft_profile">
+              <option value="0">TY-BAB / DHC6 / AMAZONE AIRLINES</option>
+              <option value="new">— nouveau —</option>
+            </select>
+          </div>
+          <div>
+            <label>Type ICAO (autocomplete sur les 142 types embarqués)</label>
+            <input id="m_aircraft_type" value="DHC6" list="aircraft_types_list">
+            <datalist id="aircraft_types_list"></datalist>
+          </div>
+        </div>
+        <div class="row r3">
+          <div>
+            <label>Immatriculation</label>
+            <input id="m_registration" value="TY-BAB">
+          </div>
+          <div>
+            <label>Callsign</label>
+            <input id="m_callsign" value="TY-BAB">
+          </div>
+          <div>
+            <label>Opérateur</label>
+            <input id="m_operator" value="AMAZONE AIRLINES / DYNAMI AVIATION OPS">
+          </div>
+        </div>
+        <div id="m_aircraft_spec_caption" class="caption"></div>
+        <hr>
+        <div class="section-title">Équipage</div>
+        <div class="row r2">
+          <div>
+            <label>N. crew</label>
+            <input id="m_n_crew" type="number" value="2" min="1">
+          </div>
+          <div>
+            <label>Pilotes</label>
+            <input id="m_pilots" value="Aditya Tri Hertiawan and Saba Muhammad">
+          </div>
+        </div>
+        <hr>
+        <div class="section-title">POC</div>
+        <div class="row r3">
+          <div><label>Grade + Nom</label><input id="m_poc_name" value="OF1 MERLIN"></div>
+          <div><label>Téléphone</label><input id="m_poc_phone" value="+ 225 07 15 013 761"></div>
+          <div><label>E-mail</label><input id="m_poc_email" value="cos-det14.j10@intradef.gouv.fr"></div>
+        </div>
+        <hr>
+        <div class="section-title">Indicateurs &amp; vol</div>
+        <div class="row r5">
+          <label class="checkbox"><input type="checkbox" id="m_sensors"> Capteurs</label>
+          <label class="checkbox"><input type="checkbox" id="m_armament"> Armement</label>
+          <label class="checkbox"><input type="checkbox" id="m_ew"> Guerre élec.</label>
+          <label class="checkbox"><input type="checkbox" id="m_vip"> VIP à bord</label>
+          <label class="checkbox"><input type="checkbox" id="m_dg"> Dangerous Goods</label>
+        </div>
+        <div class="row r2">
+          <div><label>Purpose</label><input id="m_purpose" value="LOGISTIC FLIGHT WITHOUT DANGEROUS GOODS"></div>
+          <div><label>Alternates (ICAO)</label><input id="m_alternates" value="DNAA / DXXX"></div>
+        </div>
+      </div>
+
+      <!-- TAB LEGS -->
+      <div class="tab-content" id="tab-legs">
+        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+          <button class="secondary" id="add_leg">➕ Ajouter un leg</button>
+          <button class="ghost" id="remove_leg">➖ Retirer le dernier leg</button>
+          <button class="ghost" id="preset_minna">Preset Cotonou ↔ Minna</button>
+          <button class="ghost" id="preset_abuja">Preset Cotonou ↔ Abuja</button>
+          <button class="ghost" id="preset_rci">Preset RCI 6 legs</button>
+        </div>
+        <div id="legs_container"></div>
+      </div>
+
+      <!-- TAB PREVIEW -->
+      <div class="tab-content" id="tab-preview">
+        <div id="preview_metrics"></div>
+        <div id="preview_warnings"></div>
+        <div class="section-title" style="margin-top: 20px;">Carte (Afrique de l'Ouest)</div>
+        <svg id="map_svg" class="map-svg" viewBox="-12 4 30 16" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="section-title" style="margin-top: 20px;">Aperçu du DIC généré</div>
+        <div id="dic_render"></div>
+        <hr>
+        <button id="generate_btn">📄 Générer (téléchargerait .docx en réel)</button>
+        <span class="caption" style="margin-left: 12px;">
+          Dans la vraie app Streamlit, ce bouton télécharge le <code>.docx</code> via python-docx.
+        </span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* =================================================================
+   DATA — minimal West Africa fixture (same as app/seeds/minimal_*)
+   ================================================================= */
+const AIRPORTS = {
+  DBBB: { name: "Cadjehoun, Cotonou", iso: "BJ", lat: 6.35723, lon: 2.384353 },
+  DIAP: { name: "Felix Houphouet Boigny, Abidjan", iso: "CI", lat: 5.26139, lon: -3.92629 },
+  DIBK: { name: "Bouake", iso: "CI", lat: 7.73883, lon: -5.07367 },
+  DIKO: { name: "Korhogo", iso: "CI", lat: 9.38717, lon: -5.55665 },
+  DIYO: { name: "Yamoussoukro", iso: "CI", lat: 6.90319, lon: -5.36558 },
+  DXXX: { name: "Lome-Tokoin", iso: "TG", lat: 6.16561, lon: 1.25451 },
+  DNMN: { name: "Minna", iso: "NG", lat: 9.6522, lon: 6.26222 },
+  DNAA: { name: "Nnamdi Azikiwe, Abuja", iso: "NG", lat: 9.00679, lon: 7.26317 },
+  DNIL: { name: "Ilorin", iso: "NG", lat: 8.44022, lon: 4.49392 },
+  DNIB: { name: "Ibadan", iso: "NG", lat: 7.36246, lon: 3.97833 },
+  DNKA: { name: "Kaduna", iso: "NG", lat: 10.696, lon: 7.3201 },
+  DNKN: { name: "Mallam Aminu Kano", iso: "NG", lat: 12.0476, lon: 8.52462 },
+  DNLG: { name: "Murtala Muhammed, Lagos", iso: "NG", lat: 6.5774, lon: 3.3211 },
+  DNKJ: { name: "Kainji NAFB", iso: "NG", lat: 9.89, lon: 4.5725 },
+  DNPO: { name: "Port Harcourt", iso: "NG", lat: 5.01549, lon: 6.94959 },
+  DGAA: { name: "Kotoka, Accra", iso: "GH", lat: 5.60519, lon: -0.16679 },
+  ZZTR: { name: "TOUROU (Benin AFB)", iso: "BJ", lat: 9.58, lon: 3.23 },
+};
+const WAYPOINTS = {
+  TYE:   { lat: 6.358, lon: 2.384, kind: "VOR", iso: "BJ" },
+  POLTO: { lat: 6.917, lon: 3.250, kind: "FIX", iso: "BJ" },
+  LAG:   { lat: 6.583, lon: 3.317, kind: "VOR", iso: "NG" },
+  IBA:   { lat: 7.362, lon: 3.978, kind: "VOR", iso: "NG" },
+  KELIG: { lat: 7.500, lon: 4.500, kind: "FIX", iso: "NG" },
+  TEGDA: { lat: 9.350, lon: 6.450, kind: "FIX", iso: "NG" },
+  MESES: { lat: 8.700, lon: 6.900, kind: "FIX", iso: "NG" },
+  ABC:   { lat: 9.007, lon: 7.263, kind: "VOR", iso: "NG" },
+  MNA:   { lat: 9.652, lon: 6.262, kind: "VOR", iso: "NG" },
+  VONUK: { lat: 8.700, lon: 7.700, kind: "FIX", iso: "NG" },
+  USGUN: { lat: 8.500, lon: 4.700, kind: "FIX", iso: "NG" },
+  MAGIA: { lat: 9.700, lon: 6.000, kind: "FIX", iso: "NG" },
+  ILR:   { lat: 8.440, lon: 4.494, kind: "VOR", iso: "NG" },
+  KRG:   { lat: 9.387, lon: -5.557, kind: "VOR", iso: "CI" },
+  BKY:   { lat: 7.739, lon: -5.074, kind: "VOR", iso: "CI" },
+  BONTO: { lat: 8.400, lon: -5.300, kind: "FIX", iso: "CI" },
+  ARABA: { lat: 5.700, lon: -3.500, kind: "FIX", iso: "CI" },
+  EBUSO: { lat: 6.700, lon: 2.000, kind: "FIX", iso: "BJ" },
+  ENKIT: { lat: 6.500, lon: 1.000, kind: "FIX", iso: "GH" },
+  YAM:   { lat: 6.903, lon: -5.366, kind: "VOR", iso: "CI" },
+  LM:    { lat: 6.166, lon: 1.255, kind: "VOR", iso: "TG" },
+};
+const COUNTRIES = [
+  { iso: "BJ", name: "Benin", polygon: [[0.77,6.22],[2.74,6.22],[2.74,9.0],[3.85,9.5],[3.85,12.4],[2.5,12.4],[1.0,11.0],[0.77,9.6]] },
+  { iso: "NG", name: "Nigeria", polygon: [[2.74,6.22],[5.0,4.6],[8.5,4.4],[10.2,4.6],[13.4,4.5],[14.6,6.0],[14.6,10.5],[13.5,12.3],[12.5,13.4],[7.5,13.7],[3.85,13.5],[3.85,12.4],[3.85,9.5],[2.74,9.0]] },
+  { iso: "TG", name: "Togo", polygon: [[-0.15,6.10],[1.78,6.22],[1.62,6.65],[1.62,11.1],[0.77,11.1],[-0.15,10.5]] },
+  { iso: "GH", name: "Ghana", polygon: [[-3.25,4.74],[1.20,5.85],[1.20,11.2],[-0.07,11.2],[-2.84,10.9],[-2.94,8.0],[-3.25,6.3]] },
+  { iso: "CI", name: "Cote d'Ivoire", polygon: [[-7.55,4.34],[-3.25,4.74],[-3.25,6.3],[-2.94,8.0],[-2.84,10.9],[-4.6,10.4],[-6.4,10.6],[-8.6,10.0],[-8.2,7.5],[-7.99,6.1]] },
+];
+const AIRCRAFT_TYPES = [
+  { id: "DHC6", name: "DHC-6 Twin Otter", tas: 140, fl: 90 },
+  { id: "A400", name: "A400M Atlas", tas: 422, fl: 350 },
+  { id: "C130", name: "C-130 Hercules", tas: 290, fl: 250 },
+  { id: "C30J", name: "C-130J Super Hercules", tas: 348, fl: 280 },
+  { id: "A330", name: "A330 MRTT", tas: 470, fl: 380 },
+  { id: "A310", name: "A310 MRTT", tas: 460, fl: 380 },
+  { id: "B738", name: "Boeing 737-800", tas: 453, fl: 360 },
+  { id: "F2TH", name: "Falcon 2000", tas: 460, fl: 410 },
+  { id: "F900", name: "Falcon 900", tas: 485, fl: 410 },
+  { id: "F7X",  name: "Falcon 7X", tas: 488, fl: 410 },
+  { id: "ATR42", name: "ATR 42", tas: 300, fl: 240 },
+  { id: "C295", name: "CASA C-295", tas: 260, fl: 240 },
+];
+
+/* =================================================================
+   STATE
+   ================================================================= */
+const state = {
+  template: "FRA",
+  legs: [
+    { origin: "DBBB", destination: "DNMN", fl: 90, tas: 140,
+      date: "2026-04-20", eobt: "06:00",
+      route: "TYE POLTO LAG L433 IBA R778 TEGDA MNA" },
+    { origin: "DNMN", destination: "DBBB", fl: 100, tas: 140,
+      date: "2026-04-20", eobt: "12:00",
+      route: "MNA MAGIA V377 LAG POLTO TYE" },
+  ],
+};
+
+/* =================================================================
+   ENGINE
+   ================================================================= */
+const AIRWAY_RE = /^[A-Z]{1,2}\d{1,4}$/;
+const COORD_RE = /^([NS])\s*(\d{1,2})\s*[°\s]\s*(\d{1,2})?\s*[\'\s]?\s*(\d{1,2}(?:\.\d+)?)?\s*[\"]?\s*\/\s*([EW])\s*(\d{1,3})\s*[°\s]\s*(\d{1,2})?\s*[\'\s]?\s*(\d{1,2}(?:\.\d+)?)?\s*[\"]?$/i;
+const EARTH_NM = 3440.065;
+
+function parseCoord(token) {
+  const m = COORD_RE.exec(token.trim());
+  if (!m) return null;
+  const [, ns, d1, m1, s1, ew, d2, m2, s2] = m;
+  let lat = +d1 + (m1 ? +m1/60 : 0) + (s1 ? +s1/3600 : 0);
+  let lon = +d2 + (m2 ? +m2/60 : 0) + (s2 ? +s2/3600 : 0);
+  if (ns.toUpperCase() === "S") lat = -lat;
+  if (ew.toUpperCase() === "W") lon = -lon;
+  return { lat, lon };
+}
+
+function tokenize(routeText) {
+  if (!routeText) return [];
+  const coords = [];
+  const stash = routeText.replace(/([NS])\s*\d{1,2}\s*[°\s]\s*\d{0,2}\s*[\'\s]?\s*\d{0,2}(?:\.\d+)?\s*[\"]?\s*\/\s*([EW])\s*\d{1,3}\s*[°\s]\s*\d{0,2}\s*[\'\s]?\s*\d{0,2}(?:\.\d+)?\s*[\"]?/gi,
+    (m) => { coords.push(m.trim()); return ` __COORD_${coords.length-1}__ `; }
+  );
+  const cleaned = stash.replace(/[-,]/g, " ");
+  const out = [];
+  for (const raw of cleaned.split(/\s+/)) {
+    if (!raw) continue;
+    if (raw.startsWith("__COORD_") && raw.endsWith("__")) {
+      const idx = +raw.slice("__COORD_".length, -2);
+      out.push(coords[idx].toUpperCase());
+    } else {
+      out.push(raw.toUpperCase());
+    }
+  }
+  return out;
+}
+
+function resolveToken(tok) {
+  tok = tok.trim().toUpperCase();
+  if (!tok) return { label: tok, source: "unknown", missing: true };
+  if (tok === "DCT" || tok === "DIRECT") return { label: tok, source: "airway" };
+  const c = parseCoord(tok);
+  if (c) return { label: tok, ...c, source: "coord" };
+  if (AIRWAY_RE.test(tok)) return { label: tok, source: "airway" };
+  if (AIRPORTS[tok]) {
+    const a = AIRPORTS[tok];
+    return { label: tok, lat: a.lat, lon: a.lon, source: "airport", iso: a.iso };
+  }
+  if (WAYPOINTS[tok]) {
+    const w = WAYPOINTS[tok];
+    return { label: tok, lat: w.lat, lon: w.lon, source: "waypoint", iso: w.iso };
+  }
+  return { label: tok, source: "unknown", missing: true };
+}
+
+function resolveRoute(origin, destination, routeText) {
+  const points = [];
+  points.push(resolveToken(origin));
+  for (const tok of tokenize(routeText)) {
+    const r = resolveToken(tok);
+    if (r.source === "airway") continue;
+    points.push(r);
+  }
+  points.push(resolveToken(destination));
+  const out = [];
+  for (const p of points) {
+    if (out.length && out[out.length-1].label === p.label) continue;
+    out.push(p);
+  }
+  return out;
+}
+
+function gcDist(p1, p2) {
+  const r = Math.PI / 180;
+  const lat1 = p1.lat * r, lat2 = p2.lat * r;
+  const dlat = lat2 - lat1, dlon = (p2.lon - p1.lon) * r;
+  const a = Math.sin(dlat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dlon/2)**2;
+  return 2 * EARTH_NM * Math.asin(Math.sqrt(a));
+}
+
+function gcInterp(p1, p2, f) {
+  const r = Math.PI / 180;
+  const lat1 = p1.lat * r, lat2 = p2.lat * r;
+  const lon1 = p1.lon * r, lon2 = p2.lon * r;
+  const d = gcDist(p1, p2) / EARTH_NM;
+  if (d === 0) return { ...p1 };
+  const a = Math.sin((1-f)*d) / Math.sin(d);
+  const b = Math.sin(f*d) / Math.sin(d);
+  const x = a*Math.cos(lat1)*Math.cos(lon1) + b*Math.cos(lat2)*Math.cos(lon2);
+  const y = a*Math.cos(lat1)*Math.sin(lon1) + b*Math.cos(lat2)*Math.sin(lon2);
+  const z = a*Math.sin(lat1) + b*Math.sin(lat2);
+  const lat = Math.atan2(z, Math.sqrt(x*x + y*y));
+  const lon = Math.atan2(y, x);
+  return { lat: lat/r, lon: lon/r };
+}
+
+function pointInPolygon(p, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length-1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1];
+    const xj = poly[j][0], yj = poly[j][1];
+    if (((yi > p.lat) !== (yj > p.lat)) &&
+        (p.lon < (xj-xi) * (p.lat-yi) / (yj-yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+
+function countryAt(p) {
+  for (const c of COUNTRIES) if (pointInPolygon(p, c.polygon)) return c;
+  return null;
+}
+
+function nearestWaypointLabel(p, maxNm = 30) {
+  let best = null, bestD = Infinity;
+  for (const [name, w] of Object.entries(WAYPOINTS)) {
+    const d = gcDist(p, w);
+    if (d < bestD) { bestD = d; best = name; }
+  }
+  return bestD <= maxNm ? best : null;
+}
+
+function computeLeg(leg) {
+  const result = { points: [], segments: [], warnings: [], distance: 0, time: 0 };
+  const eobt = new Date(`${leg.date}T${leg.eobt}:00Z`);
+  const points = resolveRoute(leg.origin, leg.destination, leg.route);
+  result.points = points;
+  for (const p of points) {
+    if (p.missing) result.warnings.push(`Point inconnu : ${p.label}`);
+  }
+  const coordPts = points.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+  if (coordPts.length < 2) { result.warnings.push("Pas assez de points géolocalisés."); return result; }
+  if (!leg.tas) { result.warnings.push("TAS manquant."); return result; }
+
+  const cum = [0];
+  for (let i = 1; i < coordPts.length; i++) cum.push(cum[i-1] + gcDist(coordPts[i-1], coordPts[i]));
+  result.distance = cum[cum.length-1];
+  result.time = result.distance / leg.tas * 60;
+
+  const crossings = [];
+  const startC = countryAt(coordPts[0]);
+  crossings.push({ kind: "origin", iso: startC?.iso, name: startC?.name || "Unknown",
+                   t: eobt, p: coordPts[0], label: coordPts[0].label });
+  for (let i = 1; i < coordPts.length; i++) {
+    const seg = cum[i] - cum[i-1];
+    if (seg < 0.01) continue;
+    const samples = 60;
+    let prevC = countryAt(coordPts[i-1]);
+    for (let j = 1; j <= samples; j++) {
+      const f = j / samples;
+      const pt = gcInterp(coordPts[i-1], coordPts[i], f);
+      const c = countryAt(pt);
+      if ((c?.iso || null) !== (prevC?.iso || null)) {
+        const dist_at = cum[i-1] + seg * (f - 0.5/samples);
+        const t = new Date(eobt.getTime() + dist_at / leg.tas * 3600 * 1000);
+        const nearby = nearestWaypointLabel(pt);
+        crossings.push({ kind: "border", iso: c?.iso, name: c?.name || "Unknown",
+                         t, p: pt, label: nearby || "BORDER" });
+        prevC = c;
+      }
+    }
+  }
+  const endC = countryAt(coordPts[coordPts.length-1]);
+  const tEnd = new Date(eobt.getTime() + result.time * 60 * 1000);
+  crossings.push({ kind: "destination", iso: endC?.iso, name: endC?.name || "Unknown",
+                   t: tEnd, p: coordPts[coordPts.length-1], label: coordPts[coordPts.length-1].label });
+
+  let i = 0;
+  while (i < crossings.length - 1) {
+    const s = crossings[i];
+    let j = i + 1;
+    while (j < crossings.length - 1 && crossings[j].iso === s.iso) j++;
+    const e = crossings[j];
+    const labelsInCountry = points
+      .filter(p => p.lat != null && countryAt(p)?.iso === s.iso)
+      .map(p => p.label);
+    result.segments.push({
+      iso: s.iso, name: s.name,
+      entryLabel: s.label, entryTime: s.t,
+      exitLabel: e.label, exitTime: e.t,
+      route: labelsInCountry.join(" - "),
+      fl: leg.fl, tas: leg.tas,
+    });
+    i = j;
+  }
+  return result;
+}
+
+function fmtTime(d) {
+  if (!d) return "";
+  const pad = n => String(n).padStart(2, "0");
+  return `${pad(d.getUTCDate())}/${pad(d.getUTCMonth()+1)}/${d.getUTCFullYear()}, ${pad(d.getUTCHours())}.${pad(d.getUTCMinutes())}`;
+}
+
+/* =================================================================
+   UI RENDER
+   ================================================================= */
+function $(sel) { return document.querySelector(sel); }
+
+document.querySelectorAll(".tab").forEach(t => {
+  t.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".tab-content").forEach(x => x.classList.remove("active"));
+    t.classList.add("active");
+    $(`#tab-${t.dataset.tab}`).classList.add("active");
+    if (t.dataset.tab === "preview") renderPreview();
+  });
+});
+
+const dl = $("#aircraft_types_list");
+for (const t of AIRCRAFT_TYPES) {
+  const opt = document.createElement("option");
+  opt.value = t.id; opt.label = `${t.id} — ${t.name}`;
+  dl.appendChild(opt);
+}
+$("#m_aircraft_type").addEventListener("input", () => {
+  const t = AIRCRAFT_TYPES.find(x => x.id === $("#m_aircraft_type").value.toUpperCase());
+  $("#m_aircraft_spec_caption").textContent = t
+    ? `Type connu : ${t.id} — ${t.name} • cruise TAS ${t.tas} kt • FL par défaut ${t.fl}`
+    : "Type inconnu — défauts à saisir par leg.";
+});
+$("#m_aircraft_type").dispatchEvent(new Event("input"));
+
+function renderLegs() {
+  const c = $("#legs_container");
+  c.innerHTML = "";
+  state.legs.forEach((leg, idx) => {
+    const tokens = tokenize(leg.route);
+    const chips = tokens.map(t => {
+      const r = resolveToken(t);
+      const cls = r.missing ? "miss" : r.source === "airway" ? "airway" : r.source === "coord" ? "coord" : "ok";
+      return `<span class="token-chip ${cls}">${t}${r.iso ? ` <small>${r.iso}</small>` : ""}</span>`;
+    }).join("");
+    const div = document.createElement("div");
+    div.className = "leg-card";
+    div.innerHTML = `
+      <h3>Leg ${idx + 1} <span class="caption">${leg.origin || "?"} → ${leg.destination || "?"}</span></h3>
+      <div class="row r4">
+        <div><label>Origin (ICAO)</label><input data-leg="${idx}" data-k="origin" value="${leg.origin}"></div>
+        <div><label>Destination (ICAO)</label><input data-leg="${idx}" data-k="destination" value="${leg.destination}"></div>
+        <div><label>FL</label><input data-leg="${idx}" data-k="fl" type="number" value="${leg.fl}"></div>
+        <div><label>TAS (kt)</label><input data-leg="${idx}" data-k="tas" type="number" value="${leg.tas}"></div>
+      </div>
+      <div class="row r2">
+        <div><label>Date (UTC)</label><input data-leg="${idx}" data-k="date" type="date" value="${leg.date}"></div>
+        <div><label>EOBT (UTC)</label><input data-leg="${idx}" data-k="eobt" type="time" value="${leg.eobt}"></div>
+      </div>
+      <div style="margin-top: 10px;">
+        <label>Route texte ICAO</label>
+        <input data-leg="${idx}" data-k="route" value="${leg.route}">
+        <div style="margin-top: 6px;">${chips}</div>
+      </div>
+    `;
+    c.appendChild(div);
+  });
+  c.querySelectorAll("input").forEach(inp => {
+    inp.addEventListener("input", (e) => {
+      const i = +e.target.dataset.leg, k = e.target.dataset.k;
+      state.legs[i][k] = (k === "fl" || k === "tas") ? +e.target.value : e.target.value;
+      if (k === "route" || k === "origin" || k === "destination") renderLegs();
+    });
+  });
+}
+
+$("#add_leg").addEventListener("click", () => {
+  state.legs.push({ origin: "", destination: "", fl: 90, tas: 140,
+    date: state.legs[0]?.date || "2026-04-20", eobt: "08:00", route: "" });
+  renderLegs();
+});
+$("#remove_leg").addEventListener("click", () => {
+  if (state.legs.length > 1) { state.legs.pop(); renderLegs(); }
+});
+$("#preset_minna").addEventListener("click", () => {
+  state.legs = [
+    { origin: "DBBB", destination: "DNMN", fl: 90, tas: 140, date: "2026-04-20", eobt: "06:00", route: "TYE POLTO LAG L433 IBA R778 TEGDA MNA" },
+    { origin: "DNMN", destination: "DBBB", fl: 100, tas: 140, date: "2026-04-20", eobt: "12:00", route: "MNA MAGIA V377 LAG POLTO TYE" },
+  ];
+  renderLegs();
+});
+$("#preset_abuja").addEventListener("click", () => {
+  state.legs = [
+    { origin: "DBBB", destination: "DNAA", fl: 90, tas: 140, date: "2026-04-21", eobt: "06:00", route: "TYE POLTO LAG R778 KELIG W951 MESES ABC" },
+    { origin: "DNAA", destination: "DBBB", fl: 100, tas: 140, date: "2026-04-21", eobt: "12:00", route: "ABC VONUK H340 LAG POLTO TYE" },
+  ];
+  renderLegs();
+});
+$("#preset_rci").addEventListener("click", () => {
+  state.legs = [
+    { origin: "DBBB", destination: "DIAP", fl: 90, tas: 140, date: "2026-04-25", eobt: "03:35", route: "TYE EBUSO ENKIT ARABA" },
+    { origin: "DIAP", destination: "DIBK", fl: 90, tas: 140, date: "2026-04-25", eobt: "07:30", route: "BKY" },
+    { origin: "DIBK", destination: "DIAP", fl: 90, tas: 140, date: "2026-04-25", eobt: "09:40", route: "BKY" },
+    { origin: "DIAP", destination: "DIKO", fl: 90, tas: 140, date: "2026-04-25", eobt: "12:30", route: "BKY BONTO KRG" },
+    { origin: "DIKO", destination: "DIAP", fl: 90, tas: 140, date: "2026-04-25", eobt: "15:40", route: "KRG BONTO BKY" },
+    { origin: "DIAP", destination: "DBBB", fl: 90, tas: 140, date: "2026-04-26", eobt: "07:00", route: "ARABA ENKIT EBUSO TYE" },
+  ];
+  renderLegs();
+});
+
+renderLegs();
+
+function renderPreview() {
+  const computed = state.legs.map(computeLeg);
+  const totalDist = computed.reduce((s, c) => s + c.distance, 0);
+  const totalTime = computed.reduce((s, c) => s + c.time, 0);
+  const totalSegs = computed.reduce((s, c) => s + c.segments.length, 0);
+  $("#preview_metrics").innerHTML = `
+    <div class="metric"><span class="num">${state.legs.length}</span><span class="lbl">Legs</span></div>
+    <div class="metric"><span class="num">${totalDist.toFixed(0)} NM</span><span class="lbl">Distance totale</span></div>
+    <div class="metric"><span class="num">${(totalTime/60).toFixed(1)} h</span><span class="lbl">Temps de vol total</span></div>
+    <div class="metric"><span class="num">${totalSegs}</span><span class="lbl">Segments d'État</span></div>
+  `;
+  const allWarnings = computed.flatMap((c, i) => c.warnings.map(w => `Leg ${i+1} : ${w}`));
+  $("#preview_warnings").innerHTML = allWarnings.length
+    ? allWarnings.map(w => `<div class="warning">⚠ ${w}</div>`).join("")
+    : `<div class="success">✓ Tous les waypoints résolus en base. Aucun warning.</div>`;
+  renderMap(computed);
+  renderDic(computed);
+}
+
+function renderMap(computed) {
+  const svg = $("#map_svg");
+  svg.innerHTML = "";
+  const NS = "http://www.w3.org/2000/svg";
+  // Map lon→x, lat→(invertY): SVG viewBox uses x=lon, y=20-lat to flip
+  const project = (lon, lat) => `${lon},${20-lat}`;
+  for (const c of COUNTRIES) {
+    const d = "M" + c.polygon.map(([x,y]) => project(x,y)).join(" L") + " Z";
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("d", d);
+    path.setAttribute("class", "country");
+    svg.appendChild(path);
+    // label
+    const cx = c.polygon.reduce((s,p)=>s+p[0],0)/c.polygon.length;
+    const cy = c.polygon.reduce((s,p)=>s+p[1],0)/c.polygon.length;
+    const tx = document.createElementNS(NS, "text");
+    tx.setAttribute("x", cx); tx.setAttribute("y", 20-cy);
+    tx.setAttribute("text-anchor", "middle");
+    tx.setAttribute("font-weight", "600");
+    tx.textContent = c.name;
+    svg.appendChild(tx);
+  }
+  for (const c of computed) {
+    const pts = c.points.filter(p => p.lat != null);
+    if (pts.length < 2) continue;
+    const d = "M" + pts.map(p => project(p.lon, p.lat)).join(" L");
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("d", d);
+    path.setAttribute("class", "route");
+    svg.appendChild(path);
+    for (const p of pts) {
+      const circ = document.createElementNS(NS, "circle");
+      circ.setAttribute("cx", p.lon); circ.setAttribute("cy", 20-p.lat);
+      circ.setAttribute("r", p.source === "airport" ? 0.15 : 0.1);
+      circ.setAttribute("class", p.source === "airport" ? "airport" : "point");
+      svg.appendChild(circ);
+      const tx = document.createElementNS(NS, "text");
+      tx.setAttribute("x", p.lon + 0.15); tx.setAttribute("y", 20 - p.lat - 0.15);
+      tx.textContent = p.label;
+      svg.appendChild(tx);
+    }
+    for (const s of c.segments) {
+      if (s.entryLabel === "BORDER" || (s.entryLabel && !AIRPORTS[s.entryLabel])) {
+        const circ = document.createElementNS(NS, "circle");
+        circ.setAttribute("cx", s.entryLabel === "BORDER" ? null : null);
+        if (WAYPOINTS[s.entryLabel]) {
+          circ.setAttribute("cx", WAYPOINTS[s.entryLabel].lon);
+          circ.setAttribute("cy", 20 - WAYPOINTS[s.entryLabel].lat);
+          circ.setAttribute("r", 0.13);
+          circ.setAttribute("class", "border");
+          svg.appendChild(circ);
+        }
+      }
+    }
+  }
+}
+
+function renderDic(computed) {
+  const m = {
+    ref: $("#m_ref").value, amendment: $("#m_amendment").value,
+    mission_number: $("#m_mission_number").value,
+    operator: $("#m_operator").value, type: $("#m_aircraft_type").value,
+    registration: $("#m_registration").value, callsign: $("#m_callsign").value,
+    n_crew: $("#m_n_crew").value, pilots: $("#m_pilots").value,
+    sensors: $("#m_sensors").checked ? "YES" : "NO",
+    armament: $("#m_armament").checked ? "YES" : "NO",
+    ew: $("#m_ew").checked ? "YES" : "NO",
+    vip: $("#m_vip").checked, dg: $("#m_dg").checked,
+    purpose: $("#m_purpose").value, alternates: $("#m_alternates").value,
+    poc_name: $("#m_poc_name").value, poc_phone: $("#m_poc_phone").value,
+    poc_email: $("#m_poc_email").value,
+  };
+  const departures = state.legs.map(l => l.origin);
+  const destinations = state.legs.map(l => l.destination);
+  const dateText = state.legs.length
+    ? new Date(`${state.legs[0].date}T00:00:00Z`).toUTCString().slice(5,16).toUpperCase()
+    : "";
+
+  let stateRows = "";
+  computed.forEach((c, i) => {
+    stateRows += `<tr class="bg-leg-head"><td colspan="9">Leg ${i+1}</td></tr>`;
+    for (const seg of c.segments) {
+      const isOrigCountry = seg.iso === AIRPORTS[state.legs[i].origin]?.iso;
+      const isDestCountry = seg.iso === AIRPORTS[state.legs[i].destination]?.iso;
+      const land = (isOrigCountry || isDestCountry);
+      stateRows += `<tr>
+        <td>${seg.name}</td>
+        <td class="x-cell">X</td>
+        <td class="x-cell">${land ? "" : ""}</td>
+        <td class="x-cell">${land ? "X" : ""}</td>
+        <td class="x-cell">${m.vip ? "X" : ""}</td>
+        <td class="x-cell">${m.dg ? "X" : ""}</td>
+        <td></td>
+        <td>I</td>
+        <td></td>
+      </tr>`;
+    }
+  });
+
+  let legAppendices = "";
+  computed.forEach((c, i) => {
+    let rows = "";
+    for (const seg of c.segments) {
+      rows += `<tr>
+        <td>${seg.name}</td>
+        <td>${seg.entryLabel}<br>${fmtTime(seg.entryTime)}</td>
+        <td>${seg.route}</td>
+        <td>${seg.exitLabel}<br>${fmtTime(seg.exitTime)}</td>
+        <td class="center">${seg.fl}</td>
+        <td class="center">${seg.tas}</td>
+      </tr>`;
+    }
+    legAppendices += `
+      <div style="font-weight:600; margin: 14px 0 4px 0;">
+        Leg ${i+1}  ${state.legs[i].origin} → ${state.legs[i].destination}  ·  Callsign: ${m.callsign}
+      </div>
+      <table>
+        <tr><th>State</th><th>Entry point + EOBT</th><th>Route over Territory</th><th>Exit point + EIBT</th><th>FL</th><th>TAS</th></tr>
+        ${rows}
+      </table>`;
+  });
+
+  $("#dic_render").innerHTML = `
+    <div class="docx">
+      <h2 class="title">ANNEX A</h2>
+      <h1 class="title">FRA DIPLOMATIC CLEARANCE (DIC) FORM</h1>
+      <table>
+        <tr><td style="width:35%"><b>(1) Reference number:</b></td><td>${m.ref}</td></tr>
+        <tr><td><b>(2) Amendment number:</b></td><td>${m.amendment}</td></tr>
+        <tr><td><b>Mission number:</b></td><td>${m.mission_number}</td></tr>
+      </table>
+      <table>
+        <tr><th>State</th><th>R</th><th>N</th><th>L</th><th>VIP</th><th>DG</th><th>A</th><th>FR</th><th>EXISTING DIC NUMBER</th></tr>
+        ${stateRows}
+      </table>
+      <table>
+        <tr><th style="width:8%">SERIAL</th><th style="width:42%">REQUESTED INFORMATION</th><th>INFORMATION SUBMITTED</th></tr>
+        <tr class="bg-section"><td></td><td>AIRCRAFT AND CREW</td><td></td></tr>
+        <tr><td>(12)</td><td>Requesting state</td><td>FRANCE</td></tr>
+        <tr><td>(12a)</td><td>Operator</td><td>${m.operator}</td></tr>
+        <tr><td>(13)</td><td>Number and type of aircraft</td><td>1  ${m.type}</td></tr>
+        <tr><td>(14)</td><td>Aircraft registration</td><td>${m.registration}</td></tr>
+        <tr><td>(15)</td><td>Spare aircraft</td><td>${m.registration} OR SUBSTITUTE</td></tr>
+        <tr><td>(16)</td><td>Callsign</td><td>${m.callsign}</td></tr>
+        <tr><td>(17)</td><td>Number of crew members</td><td>${m.n_crew}</td></tr>
+        <tr><td>(18)</td><td>Pilot rank and name</td><td>${m.pilots}</td></tr>
+        <tr><td>(19)</td><td>Photographic sensors and/or cameras</td><td>${m.sensors}</td></tr>
+        <tr><td>(20)</td><td>Armament</td><td>${m.armament}</td></tr>
+        <tr><td>(21)</td><td>Electronic warfare equipment</td><td>${m.ew}</td></tr>
+        <tr class="bg-section"><td></td><td>FLIGHT DETAILS (Detailed routing in Appendix 1)</td><td></td></tr>
+        <tr><td>(22)</td><td>Date of flight</td><td>${dateText}</td></tr>
+        <tr><td>(23)</td><td>Purpose of flight</td><td>${m.purpose}</td></tr>
+        <tr><td>(24)</td><td>Departure airport</td><td>${departures.join(" / ")}</td></tr>
+        <tr><td>(25)</td><td>Destination airport(s)</td><td>${destinations.join(" / ")}</td></tr>
+        <tr><td>(26)</td><td>Alternate airport(s)</td><td>${m.alternates}</td></tr>
+        <tr><td>(27)</td><td>Radio frequencies</td><td>VHF</td></tr>
+        <tr class="bg-section"><td></td><td>POINT OF CONTACT</td><td></td></tr>
+        <tr><td>(32)</td><td>Rank, name, first name</td><td>${m.poc_name}</td></tr>
+        <tr><td>(33)</td><td>Telephone number</td><td>${m.poc_phone}</td></tr>
+        <tr><td>(34)</td><td>Personal E-mail</td><td>${m.poc_email}</td></tr>
+      </table>
+      <div class="page-break">— page 2 — APPENDIX 1 · DETAILED ITINERARY —</div>
+      ${legAppendices}
+    </div>
+  `;
+}
+
+$("#generate_btn").addEventListener("click", () => {
+  alert("Dans la vraie app Streamlit, ce bouton télécharge un .docx via python-docx.\n\nIci on prévisualise dans la page (rendu HTML fidèle à la sortie Word).");
+});
+
+// Tab Preview pre-fill if user clicks straight
+renderPreview();
+</script>
+</body>
+</html>
