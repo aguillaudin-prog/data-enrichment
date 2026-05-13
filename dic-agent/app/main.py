@@ -35,12 +35,27 @@ def country_index_cached():
     return route_engine._build_country_index()
 
 
-def _aircraft_picker(key_prefix: str) -> dict:
-    rows = db.list_aircraft()
+def _operator_picker(key_prefix: str) -> str | None:
+    """Dropdown of known operators (compagnies) — drives downstream filters."""
+    operators = db.list_operators()
+    options = operators + ["— autre / nouveau —"]
+    if not operators:
+        sel = "— autre / nouveau —"
+        st.info("Aucune compagnie en base. Saisis-en une et un appareil pour démarrer.")
+    else:
+        sel = st.selectbox("Compagnie", options, key=f"{key_prefix}_op_sel")
+    if sel == "— autre / nouveau —":
+        return st.text_input("Nom de la compagnie (saisie libre)", key=f"{key_prefix}_op_text").strip() or None
+    return sel
+
+
+def _aircraft_picker(key_prefix: str, operator: str | None = None) -> dict:
+    rows = db.list_aircraft(operator=operator)
     options = ["— nouveau —"] + [
-        f"{r['registration']} / {r['type_icao'] or '?'} / {r['operator'] or '?'}" for r in rows
+        f"{r['registration']} / {r['type_icao'] or '?'}" for r in rows
     ]
-    sel = st.selectbox("Profil appareil", options, key=f"{key_prefix}_ap_sel")
+    label = f"Appareil ({operator})" if operator else "Appareil"
+    sel = st.selectbox(label, options, key=f"{key_prefix}_ap_sel")
     if sel != "— nouveau —":
         idx = options.index(sel) - 1
         r = rows[idx]
@@ -61,7 +76,8 @@ def _aircraft_picker(key_prefix: str) -> dict:
         ).strip().upper()
     with c2:
         callsign = st.text_input("Callsign", key=f"{key_prefix}_cs").strip().upper()
-        operator = st.text_input("Opérateur", key=f"{key_prefix}_op").strip()
+    # operator is inherited from the parent selector
+    operator_inherited = operator or ""
 
     if type_icao:
         types = db.list_aircraft_types(type_icao)
@@ -75,10 +91,10 @@ def _aircraft_picker(key_prefix: str) -> dict:
             st.warning(f"Type `{type_icao}` inconnu en base — il sera quand même accepté.")
 
     if reg and st.button("💾 Sauver profil appareil", key=f"{key_prefix}_save_ap"):
-        db.save_aircraft(reg, type_icao or None, callsign or None, operator or None)
+        db.save_aircraft(reg, type_icao or None, callsign or None, operator_inherited or None)
         st.success(f"Profil {reg} enregistré.")
         st.rerun()
-    return {"registration": reg, "type_icao": type_icao, "callsign": callsign, "operator": operator}
+    return {"registration": reg, "type_icao": type_icao, "callsign": callsign, "operator": operator_inherited}
 
 
 def _crew_picker(key_prefix: str, operator: str | None = None) -> dict:
@@ -306,9 +322,14 @@ with tab_mission:
         mission_number = st.text_input("Mission number", value="")
 
     st.divider()
+    st.subheader("Compagnie")
+    selected_operator = _operator_picker("mission")
+    st.divider()
     st.subheader("Appareil")
-    ap = _aircraft_picker("mission")
-    selected_operator = ap.get("operator") or None
+    ap = _aircraft_picker("mission", operator=selected_operator)
+    # If user just typed a new operator, override what the aircraft picker returned.
+    if selected_operator and not ap.get("operator"):
+        ap["operator"] = selected_operator
     st.divider()
     st.subheader("Équipage")
     crew = _crew_picker("mission", operator=selected_operator)
@@ -381,8 +402,8 @@ with tab_legs:
             cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
             by_cat.setdefault(cat, []).append(r)
         cats = sorted(by_cat.keys())
-        cat_sel = st.selectbox("Catégorie", ["— toutes —"] + cats, key="tpl_cat")
-        filtered = tpl_rows if cat_sel == "— toutes —" else by_cat.get(cat_sel, [])
+        cat_sel = st.selectbox("Dossier", ["— tous —"] + cats, key="tpl_cat")
+        filtered = tpl_rows if cat_sel == "— tous —" else by_cat.get(cat_sel, [])
         tpl_options = ["— pas de template —"] + [r["name"] for r in filtered]
         sel_tpl = st.selectbox(
             "Recharger une mission depuis la bibliothèque", tpl_options, key="tpl_sel",
@@ -519,6 +540,41 @@ with tab_preview:
                 file_name=filename,
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
+
+            # Auto-save the current mission as a route_template so the library
+            # grows naturally with use. Folder = country ISO of the very first
+            # leg's origin, or 'Divers' if unknown.
+            origin_iso = _resolve_country_for_airport(st.session_state.legs[0]["origin"])
+            folder = origin_iso or "Divers"
+            sanitised_legs = [
+                {
+                    "order": i + 1,
+                    "origin": l["origin"],
+                    "destination": l["destination"],
+                    "route_text": l["route_text"],
+                    "fl": l["fl"],
+                    "tas": l["tas"],
+                }
+                for i, l in enumerate(st.session_state.legs)
+                if l.get("origin") and l.get("destination")
+            ]
+            parts = [sanitised_legs[0]["origin"]] + [l["destination"] for l in sanitised_legs]
+            tpl_name = f"{folder} / " + " → ".join(dict.fromkeys(parts))
+            try:
+                with db.connect() as c:
+                    c.execute(
+                        """
+                        INSERT INTO route_template (name, category, legs_json)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(name) DO UPDATE SET
+                            category = excluded.category,
+                            legs_json = excluded.legs_json
+                        """,
+                        (tpl_name, folder, json.dumps(sanitised_legs, ensure_ascii=False)),
+                    )
+                st.success(f"💾 Template auto-sauvé : `{tpl_name}` (dossier *{folder}*).")
+            except Exception as e:
+                st.warning(f"Auto-save template échoué : {e}")
 
     with bc2:
         if st.button("✈️ Générer FPL ICAO (1 par leg)"):

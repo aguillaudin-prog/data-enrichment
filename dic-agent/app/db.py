@@ -251,9 +251,28 @@ def list_countries() -> list[sqlite3.Row]:
         return c.execute("SELECT iso_a2, iso_a3, name_en, name_fr, geom_geojson FROM country").fetchall()
 
 
-def list_aircraft() -> list[sqlite3.Row]:
+def list_aircraft(operator: str | None = None) -> list[sqlite3.Row]:
     with connect() as c:
+        if operator:
+            return c.execute(
+                "SELECT * FROM aircraft WHERE operator = ? ORDER BY registration",
+                (operator,),
+            ).fetchall()
         return c.execute("SELECT * FROM aircraft ORDER BY registration").fetchall()
+
+
+def list_operators() -> list[str]:
+    """Distinct, sorted list of operator names found in the aircraft + pilot tables."""
+    with connect() as c:
+        rows = c.execute(
+            """
+            SELECT operator AS name FROM aircraft WHERE operator IS NOT NULL AND operator != ''
+            UNION
+            SELECT allowed_operator AS name FROM pilot WHERE allowed_operator IS NOT NULL AND allowed_operator != ''
+            ORDER BY name
+            """
+        ).fetchall()
+        return [r["name"] for r in rows]
 
 
 def list_aircraft_types(prefix: str = "") -> list[sqlite3.Row]:
