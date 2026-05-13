@@ -41,8 +41,19 @@ class SuggestedRoute:
 
     @property
     def route_text(self) -> str:
-        # exclude origin/destination from the route string (FPL convention)
-        return " ".join(self.waypoints[1:-1]) if len(self.waypoints) > 2 else "DCT"
+        """Render the suggested route as an FPL-conformant string.
+
+        Origin and destination are excluded. Consecutive waypoints are
+        joined with explicit `DCT` so IFR planning systems can't mistake
+        a 2-letter waypoint ident for an airway code (the cause of the
+        'Airway TL does not exist between PAM and BNA' RocketRoute error).
+        For zero intermediate waypoints we emit `DCT` — caller knows it
+        means 'direct, no airway routing yet, an OPS officer must refine'.
+        """
+        inner = self.waypoints[1:-1]
+        if not inner:
+            return "DCT"
+        return " DCT ".join(inner)
 
 
 def _airport_point(icao: str) -> tuple[str, float, float] | None:
@@ -253,6 +264,32 @@ def suggest_route(
         warnings.append("A* sans solution — fallback DCT.")
         path = [origin_icao, destination_icao]
         dist = _great_circle_nm((origin[1], origin[2]), (destination[1], destination[2]))
+
+    # Drop intermediate waypoints that don't add information : either
+    # collocated with the origin/destination (< 15 NM), so close to the
+    # previous kept point that they collapse to noise (< 10 NM), or whose
+    # ident is 1-2 letters (would be parsed as an airway name by IFR
+    # planning systems, breaking the route syntax).
+    if len(path) > 2:
+        o_pt = (origin[1], origin[2])
+        d_pt = (destination[1], destination[2])
+        kept: list[str] = [path[0]]
+        for label in path[1:-1]:
+            if label not in nodes:
+                continue
+            if len(label) < 3:
+                continue  # 1-2 letter idents look like airway codes (TL, BD, …)
+            p = nodes[label]
+            if _great_circle_nm(p, o_pt) < 15.0:
+                continue
+            if _great_circle_nm(p, d_pt) < 15.0:
+                continue
+            prev = nodes.get(kept[-1])
+            if prev and _great_circle_nm(p, prev) < 10.0:
+                continue
+            kept.append(label)
+        kept.append(path[-1])
+        path = kept
 
     return SuggestedRoute(
         origin=origin_icao,
