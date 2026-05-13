@@ -433,6 +433,24 @@ def _clear_leg_widget_state() -> None:
 _NEW_MISSION_LABEL = "✨ Nouvelle mission"
 
 
+def _set_leg_widget_values(idx: int, leg: dict) -> None:
+    """Pre-write the widget state for a leg directly into session_state.
+
+    `value=` on st.text_input/number_input/date_input/time_input is ignored
+    when the widget already has a session_state entry (and Streamlit's
+    internal widget registry sometimes keeps stale entries even after our
+    own `del`). Writing the keys explicitly is the only fully reliable way
+    to make the displayed widget value match the new data.
+    """
+    st.session_state[f"leg_{idx}_orig"] = leg.get("origin", "")
+    st.session_state[f"leg_{idx}_dest"] = leg.get("destination", "")
+    st.session_state[f"leg_{idx}_fl"] = int(leg.get("fl") or 90)
+    st.session_state[f"leg_{idx}_tas"] = int(leg.get("tas") or 140)
+    st.session_state[f"leg_{idx}_date"] = leg.get("date") or dt.date.today()
+    st.session_state[f"leg_{idx}_eobt"] = leg.get("eobt_time") or dt.time(0, 0)
+    st.session_state[f"leg_{idx}_route"] = leg.get("route_text", "")
+
+
 def _apply_template(tpl_name: str, filtered_templates: list) -> None:
     """Wipe leg widget state and populate st.session_state.legs from a template."""
     tpl = next((r for r in filtered_templates if r["name"] == tpl_name), None)
@@ -453,7 +471,7 @@ def _apply_template(tpl_name: str, filtered_templates: list) -> None:
             day_offset = 1 + rollover // 16
             eobt_day = base_date + dt.timedelta(days=day_offset)
             eobt_hour = 6 + (rollover % 16)
-        st.session_state.legs.append({
+        leg = {
             "origin": leg_data.get("origin") or "",
             "destination": leg_data.get("destination") or "",
             "fl": leg_data.get("fl") or 90,
@@ -461,14 +479,17 @@ def _apply_template(tpl_name: str, filtered_templates: list) -> None:
             "date": eobt_day,
             "eobt_time": dt.time(eobt_hour, 0),
             "route_text": leg_data.get("route_text") or "",
-        })
+        }
+        st.session_state.legs.append(leg)
+        _set_leg_widget_values(li, leg)
 
 
 def _reset_to_blank_mission() -> None:
     _clear_leg_widget_state()
-    st.session_state.legs = [
-        {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
-    ]
+    blank = {"origin": "", "destination": "", "fl": 90, "tas": 140,
+             "date": dt.date.today(), "eobt_time": dt.time(0, 0), "route_text": ""}
+    st.session_state.legs = [blank]
+    _set_leg_widget_values(0, blank)
     st.session_state.pop("_loaded_tpl_name", None)
 
 
