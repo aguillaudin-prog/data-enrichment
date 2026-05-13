@@ -75,31 +75,64 @@ def _aircraft_picker(key_prefix: str) -> dict:
 
 
 def _crew_picker(key_prefix: str) -> dict:
-    rows = db.list_crews()
-    options = ["— nouveau —"] + [r["name"] for r in rows]
-    sel = st.selectbox("Profil équipage", options, key=f"{key_prefix}_crew_sel")
-    if sel != "— nouveau —":
-        r = next(x for x in rows if x["name"] == sel)
-        members = json.loads(r["members_json"])
-        pilots = " + ".join(f"{m.get('rank','')} {m.get('name','')}".strip() for m in members)
-        st.caption(f"{r['n_crew']} crew — {pilots}")
-        return {"n_crew": r["n_crew"], "pilots": pilots, "members": members}
-    c1, c2, c3 = st.columns([1, 2, 2])
-    with c1:
-        n_crew = st.number_input("N. crew", min_value=1, value=2, key=f"{key_prefix}_ncrew")
-    with c2:
-        pilots = st.text_input(
-            "Pilotes (ex. 'CPT Aditya Tri Hertiawan + FO Saba Muhammad')",
-            key=f"{key_prefix}_pilots",
+    """Two independent dropdowns: CDB and FO. Pilots are mixable, not paired."""
+    cdbs = db.list_pilots(role="CDB")
+    fos = db.list_pilots(role="FO")
+
+    if not cdbs and not fos:
+        st.warning(
+            "Aucun pilote en base. Lance `python -m app.seed_pilots` "
+            "ou ajoute-les via l'expander ci-dessous."
         )
+
+    cdb_options = [f"{p['rank'] or ''} {p['name']}".strip() for p in cdbs] + ["— autre —"]
+    fo_options = [f"{p['rank'] or ''} {p['name']}".strip() for p in fos] + ["— autre —", "— aucun —"]
+
+    c1, c2, c3 = st.columns([2, 2, 1])
+    with c1:
+        sel_cdb = st.selectbox("Commandant de bord (CDB)", cdb_options, key=f"{key_prefix}_cdb_sel")
+        if sel_cdb == "— autre —":
+            cdb_text = st.text_input("CDB (saisie libre)", key=f"{key_prefix}_cdb_text").strip()
+        else:
+            cdb_text = sel_cdb
+    with c2:
+        sel_fo = st.selectbox("Copilote (FO)", fo_options, key=f"{key_prefix}_fo_sel")
+        if sel_fo == "— autre —":
+            fo_text = st.text_input("FO (saisie libre)", key=f"{key_prefix}_fo_text").strip()
+        elif sel_fo == "— aucun —":
+            fo_text = ""
+        else:
+            fo_text = sel_fo
     with c3:
-        save_name = st.text_input("Nom du profil (pour sauver)", key=f"{key_prefix}_crew_name")
-    if save_name and pilots and st.button("💾 Sauver équipage", key=f"{key_prefix}_save_crew"):
-        members = [{"rank": "", "name": p.strip()} for p in pilots.split("+")]
-        db.save_crew(save_name, members, int(n_crew))
-        st.success("Équipage enregistré.")
-        st.rerun()
-    return {"n_crew": int(n_crew), "pilots": pilots, "members": []}
+        n_crew = st.number_input(
+            "N. crew",
+            min_value=1, max_value=10,
+            value=2 if fo_text else 1,
+            key=f"{key_prefix}_ncrew",
+        )
+
+    pilots_display = cdb_text + (f" and {fo_text}" if fo_text else "")
+    st.caption(f"Équipage actuel : **{pilots_display}**")
+
+    with st.expander("➕ Ajouter un pilote en base"):
+        ac1, ac2, ac3 = st.columns([2, 1, 1])
+        with ac1:
+            new_name = st.text_input("Nom prénom", key=f"{key_prefix}_new_pilot_name")
+        with ac2:
+            new_role = st.selectbox("Rôle", ["CDB", "FO"], key=f"{key_prefix}_new_pilot_role")
+        with ac3:
+            new_rank = st.text_input("Grade", value="CPT", key=f"{key_prefix}_new_pilot_rank")
+        if new_name and st.button("💾 Ajouter", key=f"{key_prefix}_save_pilot"):
+            db.save_pilot(new_name, new_role, new_rank or None)
+            st.success(f"Pilote {new_name} ({new_role}) ajouté.")
+            st.rerun()
+
+    return {
+        "n_crew": int(n_crew),
+        "pilots": pilots_display,
+        "cdb": cdb_text,
+        "fo": fo_text,
+    }
 
 
 def _poc_picker(key_prefix: str) -> dict:

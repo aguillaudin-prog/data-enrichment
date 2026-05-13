@@ -60,6 +60,15 @@ CREATE TABLE IF NOT EXISTS crew (
     n_crew INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pilot (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('CDB', 'FO')),
+    rank TEXT,
+    active INTEGER DEFAULT 1,
+    UNIQUE(name, role)
+);
+
 CREATE TABLE IF NOT EXISTS poc (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     rank TEXT,
@@ -270,6 +279,36 @@ def save_aircraft(registration: str, type_icao: str | None, callsign: str | None
             (registration.strip().upper(), type_icao, callsign, operator),
         )
         return cur.fetchone()[0]
+
+
+def list_pilots(role: str | None = None) -> list[sqlite3.Row]:
+    with connect() as c:
+        if role:
+            return c.execute(
+                "SELECT * FROM pilot WHERE role = ? AND active = 1 ORDER BY name", (role,)
+            ).fetchall()
+        return c.execute("SELECT * FROM pilot WHERE active = 1 ORDER BY role, name").fetchall()
+
+
+def save_pilot(name: str, role: str, rank: str | None = None) -> int:
+    if role not in ("CDB", "FO"):
+        raise ValueError("role must be 'CDB' or 'FO'")
+    with connect() as c:
+        cur = c.execute(
+            """
+            INSERT INTO pilot (name, role, rank, active)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(name, role) DO UPDATE SET rank=excluded.rank, active=1
+            RETURNING id
+            """,
+            (name.strip(), role, rank),
+        )
+        return cur.fetchone()[0]
+
+
+def deactivate_pilot(pilot_id: int) -> None:
+    with connect() as c:
+        c.execute("UPDATE pilot SET active = 0 WHERE id = ?", (pilot_id,))
 
 
 def save_crew(name: str, members: list[dict], n_crew: int) -> int:
