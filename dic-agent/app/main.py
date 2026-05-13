@@ -39,11 +39,26 @@ def _operator_picker(key_prefix: str) -> str | None:
     """Dropdown of known operators (compagnies) — drives downstream filters."""
     operators = db.list_operators()
     options = operators + ["— autre / nouveau —"]
+
+    def _on_operator_change() -> None:
+        # Changing the operator invalidates the aircraft & crew selection,
+        # plus any half-typed 'new aircraft' form fields. Clear them so the
+        # user starts from a clean state with the new operator's fleet.
+        for k in (
+            f"{key_prefix}_ap_sel", f"{key_prefix}_reg", f"{key_prefix}_type",
+            f"{key_prefix}_cs", f"{key_prefix}_cdb_sel", f"{key_prefix}_fo_sel",
+            f"{key_prefix}_cdb_text", f"{key_prefix}_fo_text",
+        ):
+            st.session_state.pop(k, None)
+
     if not operators:
         sel = "— autre / nouveau —"
         st.info("Aucune compagnie en base. Saisis-en une et un appareil pour démarrer.")
     else:
-        sel = st.selectbox("Compagnie", options, key=f"{key_prefix}_op_sel")
+        sel = st.selectbox(
+            "Compagnie", options, key=f"{key_prefix}_op_sel",
+            on_change=_on_operator_change,
+        )
     if sel == "— autre / nouveau —":
         return st.text_input("Nom de la compagnie (saisie libre)", key=f"{key_prefix}_op_text").strip() or None
     return sel
@@ -198,6 +213,13 @@ def _poc_picker(key_prefix: str) -> dict:
 
 
 def _leg_editor(idx: int, leg: dict) -> dict:
+    # Apply any pending route suggestion BEFORE the route_text widget renders.
+    # This is the only way to update a widget's displayed value from a callback:
+    # set its session_state key while the widget doesn't yet exist this run.
+    pending_route = st.session_state.pop(f"_pending_route_{idx}", None)
+    if pending_route is not None:
+        st.session_state[f"leg_{idx}_route"] = pending_route
+
     st.markdown(f"### Leg {idx + 1}")
     c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
     with c1:
@@ -239,20 +261,19 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                 with st.spinner("Calcul A*…"):
                     sug = route_suggester.suggest_route(origin, destination)
                 if sug.waypoints and sug.distance_nm > 0:
-                    st.session_state[f"leg_{idx}_suggested"] = sug.route_text
-                    st.success(
-                        f"Route suggérée : `{sug.route_text}` ({sug.distance_nm:.0f} NM, "
-                        f"{sug.nodes_explored} nœuds explorés)"
+                    st.session_state[f"_pending_route_{idx}"] = sug.route_text
+                    st.session_state[f"_pending_suggest_msg_{idx}"] = (
+                        f"Route suggérée : `{sug.route_text}` "
+                        f"({sug.distance_nm:.0f} NM, {sug.nodes_explored} nœuds explorés)"
                     )
-                    for w in sug.warnings:
-                        st.warning(w)
+                    st.rerun()
                 else:
                     st.error("Pas de route trouvée — vérifie les ICAO d'origine/destination.")
 
-    # Apply suggestion if user clicked the button (forces an input value update)
-    suggested = st.session_state.pop(f"leg_{idx}_suggested", None)
-    if suggested:
-        route_text = suggested
+    # Show the success message from a previous suggestion (cleared after one render).
+    msg = st.session_state.pop(f"_pending_suggest_msg_{idx}", None)
+    if msg:
+        st.success(msg)
 
     return {
         "origin": origin,
@@ -418,7 +439,16 @@ with tab_legs:
             cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
             by_cat.setdefault(cat, []).append(r)
         cats = sorted(by_cat.keys())
-        cat_sel = st.selectbox("Dossier", ["— tous —"] + cats, key="tpl_cat")
+
+        def _on_dossier_change() -> None:
+            # When the Dossier filter changes, drop the previously chosen
+            # template so the second selectbox starts fresh.
+            st.session_state.pop("tpl_sel", None)
+
+        cat_sel = st.selectbox(
+            "Dossier", ["— tous —"] + cats, key="tpl_cat",
+            on_change=_on_dossier_change,
+        )
         filtered = tpl_rows if cat_sel == "— tous —" else by_cat.get(cat_sel, [])
         tpl_options = ["— pas de template —"] + [r["name"] for r in filtered]
         sel_tpl = st.selectbox(
@@ -435,13 +465,25 @@ with tab_legs:
                 _clear_leg_widget_state()
                 st.session_state.legs = []
                 for li, leg_data in enumerate(legs_data or []):
+                    # Spread EOBT every 2h starting from 06:00 UTC. Roll over
+                    # to next day(s) once we pass 22:00 to handle multi-leg
+                    # missions cleanly (e.g. 6 legs around the clock).
+                    hours_from_six = li * 2
+                    if hours_from_six < 16:  # 06:00 → 22:00 same day
+                        eobt_day = base_date
+                        eobt_hour = 6 + hours_from_six
+                    else:
+                        rollover = hours_from_six - 16  # hours past 22:00 of day 0
+                        day_offset = 1 + rollover // 16
+                        eobt_day = base_date + dt.timedelta(days=day_offset)
+                        eobt_hour = 6 + (rollover % 16)
                     st.session_state.legs.append({
                         "origin": leg_data.get("origin") or "",
                         "destination": leg_data.get("destination") or "",
                         "fl": leg_data.get("fl") or 90,
                         "tas": leg_data.get("tas") or 140,
-                        "date": base_date,
-                        "eobt_time": dt.time(6 + li * 2, 0),
+                        "date": eobt_day,
+                        "eobt_time": dt.time(eobt_hour, 0),
                         "route_text": leg_data.get("route_text") or "",
                     })
                 st.session_state["_loaded_tpl_name"] = sel_tpl
