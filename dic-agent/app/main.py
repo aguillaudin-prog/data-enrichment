@@ -393,6 +393,22 @@ with tab_mission:
     }
 
 
+def _clear_leg_widget_state() -> None:
+    """Forget every widget-level value tied to the legs editor.
+
+    Streamlit's text/number/date/time inputs persist their value in
+    st.session_state under their `key`. When we rewrite st.session_state.legs
+    programmatically (e.g. loading a template), the widgets keep their old
+    value unless we also delete the per-widget keys. This helper does that.
+    """
+    keys = [
+        k for k in list(st.session_state.keys())
+        if k.startswith("leg_") or k.startswith("miss_")
+    ]
+    for k in keys:
+        del st.session_state[k]
+
+
 with tab_legs:
     tpl_rows = db.list_route_templates()
     if tpl_rows:
@@ -416,6 +432,7 @@ with tab_legs:
                 # Templates may be stored either as {legs: [...]} or as a bare list of legs.
                 legs_data = payload.get("legs") if isinstance(payload, dict) else payload
                 base_date = dt.date.today()
+                _clear_leg_widget_state()
                 st.session_state.legs = []
                 for li, leg_data in enumerate(legs_data or []):
                     st.session_state.legs.append({
@@ -427,15 +444,37 @@ with tab_legs:
                         "eobt_time": dt.time(6 + li * 2, 0),
                         "route_text": leg_data.get("route_text") or "",
                     })
+                st.session_state["_loaded_tpl_name"] = sel_tpl
                 st.success(f"{len(legs_data or [])} legs chargés depuis '{sel_tpl}'. Édite et regénère.")
                 st.rerun()
 
-    if st.button("➕ Ajouter un leg"):
-        st.session_state.legs.append(
-            {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
-        )
-    if len(st.session_state.legs) > 1 and st.button("➖ Retirer le dernier leg"):
-        st.session_state.legs.pop()
+    if st.session_state.get("_loaded_tpl_name"):
+        st.caption(f"🗂️ Mission active : **{st.session_state['_loaded_tpl_name']}**")
+
+    bc1, bc2, bc3 = st.columns([1, 1, 1])
+    with bc1:
+        if st.button("➕ Ajouter un leg"):
+            new_idx = len(st.session_state.legs)
+            # Wipe any stale widget state at the upcoming index.
+            for suffix in ("orig", "dest", "fl", "tas", "date", "eobt", "route", "suggested"):
+                st.session_state.pop(f"leg_{new_idx}_{suffix}", None)
+            st.session_state.legs.append(
+                {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
+            )
+    with bc2:
+        if len(st.session_state.legs) > 1 and st.button("➖ Retirer le dernier leg"):
+            last_idx = len(st.session_state.legs) - 1
+            for suffix in ("orig", "dest", "fl", "tas", "date", "eobt", "route", "suggested"):
+                st.session_state.pop(f"leg_{last_idx}_{suffix}", None)
+            st.session_state.legs.pop()
+    with bc3:
+        if st.button("🧹 Vider tous les legs", help="Repart d'une mission vierge sans charger de template"):
+            _clear_leg_widget_state()
+            st.session_state.legs = [
+                {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
+            ]
+            st.session_state.pop("_loaded_tpl_name", None)
+            st.rerun()
     for i, leg in enumerate(st.session_state.legs):
         st.session_state.legs[i] = _leg_editor(i, leg)
         st.divider()
