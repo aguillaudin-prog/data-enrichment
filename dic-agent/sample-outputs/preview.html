@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>DIC Agent — Aperçu UI + résultat</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f5f6f8; color: #1f2937; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  .grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 24px; }
+  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+  .card header { padding: 14px 18px; border-bottom: 1px solid #e5e7eb; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .card .body { padding: 18px; }
+  h1 { font-size: 22px; margin: 0 0 4px 0; }
+  .subtitle { color: #6b7280; font-size: 13px; margin-bottom: 18px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: #ecfdf5; color: #047857; font-weight: 600; }
+
+  /* Streamlit-like UI */
+  .stream { font-size: 13px; }
+  .stream .tabs { display: flex; gap: 0; border-bottom: 2px solid #e5e7eb; margin-bottom: 16px; }
+  .stream .tab { padding: 8px 14px; cursor: default; color: #6b7280; }
+  .stream .tab.active { color: #ef4444; border-bottom: 2px solid #ef4444; margin-bottom: -2px; font-weight: 600; }
+  .stream .group { margin: 14px 0; }
+  .stream label { display: block; font-size: 12px; color: #374151; margin-bottom: 4px; font-weight: 500; }
+  .stream input, .stream select, .stream textarea {
+    width: 100%; border: 1px solid #d1d5db; border-radius: 6px; padding: 6px 10px;
+    font-size: 13px; background: #fff; font-family: inherit;
+  }
+  .stream .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .stream .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .stream .row4 { display: grid; grid-template-columns: 1.5fr 1.5fr 0.7fr 0.7fr; gap: 12px; }
+  .stream .checkbox { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .stream button { background: #ef4444; color: white; border: none; border-radius: 6px; padding: 8px 16px; font-weight: 600; cursor: default; }
+  .stream button.secondary { background: #fff; color: #ef4444; border: 1px solid #ef4444; }
+  .stream .caption { font-size: 11px; color: #6b7280; margin-top: 4px; }
+  .stream .warning { background: #fffbeb; border: 1px solid #fde68a; padding: 8px 12px; border-radius: 6px; font-size: 12px; color: #92400e; margin: 8px 0; }
+  .stream .success { background: #f0fdf4; border: 1px solid #bbf7d0; padding: 8px 12px; border-radius: 6px; font-size: 12px; color: #166534; margin: 8px 0; }
+  .stream .metric { display: inline-block; background: #f9fafb; padding: 10px 14px; border-radius: 8px; margin-right: 8px; min-width: 110px; }
+  .stream .metric .num { font-size: 18px; font-weight: 700; display: block; }
+  .stream .metric .lbl { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stream hr { border: none; border-top: 1px solid #e5e7eb; margin: 16px 0; }
+  .stream .section-title { font-weight: 600; font-size: 14px; margin: 12px 0 8px 0; }
+
+  /* DIC document rendering */
+  .docx { background: #fff; padding: 28px 32px; border-radius: 8px; font-family: "Arial", sans-serif; font-size: 11px; color: #000; }
+  .docx h2.title { text-align: center; font-size: 14px; font-weight: 700; margin: 4px 0; letter-spacing: 0.5px; }
+  .docx h1.title { text-align: center; font-size: 16px; font-weight: 700; margin: 4px 0 14px 0; }
+  .docx table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  .docx th, .docx td { border: 1px solid #444; padding: 4px 6px; text-align: left; vertical-align: top; line-height: 1.35; }
+  .docx th { background: #bfbfbf; font-weight: 700; text-align: center; font-size: 10px; }
+  .docx .bg-section td { background: #bfbfbf; font-weight: 700; }
+  .docx .bg-leg-head td { background: #f2f2f2; font-weight: 600; }
+  .docx .small { font-size: 9px; }
+  .docx .page-break { border-top: 1px dashed #9ca3af; margin: 18px 0 14px 0; text-align: center; color: #6b7280; font-size: 10px; }
+  .docx .center { text-align: center; }
+  .docx td.x-cell { text-align: center; font-weight: 700; }
+
+  .legend { font-size: 12px; color: #6b7280; margin-top: 16px; padding: 12px; background: #f9fafb; border-radius: 6px; }
+  .legend code { background: #fff; padding: 1px 4px; border-radius: 3px; border: 1px solid #e5e7eb; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🛩️ DIC Agent — Aperçu</h1>
+  <div class="subtitle">À gauche : l'UI Streamlit avec une mission Cotonou ↔ Minna pré-remplie. À droite : le <code>.docx</code> qui sort de l'app, rendu en HTML pour preview.</div>
+
+  <div class="grid">
+
+    <!-- LEFT : Streamlit mockup -->
+    <div class="card stream">
+      <header>
+        UI Streamlit (mockup statique)
+        <span class="pill">localhost:8501</span>
+      </header>
+      <div class="body">
+        <div class="tabs">
+          <div class="tab">1️⃣ Mission &amp; profils</div>
+          <div class="tab active">2️⃣ Legs</div>
+          <div class="tab">3️⃣ Preview &amp; export</div>
+        </div>
+
+        <div class="section-title">Leg 1</div>
+        <div class="row4">
+          <div>
+            <label>Origin (ICAO)</label>
+            <input value="DBBB" readonly>
+            <div class="caption">Cadjehoun, Cotonou (Benin)</div>
+          </div>
+          <div>
+            <label>Destination (ICAO)</label>
+            <input value="DNMN" readonly>
+            <div class="caption">Minna, Nigeria</div>
+          </div>
+          <div>
+            <label>FL</label>
+            <input value="90" readonly>
+          </div>
+          <div>
+            <label>TAS (kt)</label>
+            <input value="140" readonly>
+          </div>
+        </div>
+        <div class="row" style="margin-top: 10px;">
+          <div>
+            <label>Date (UTC)</label>
+            <input value="2026-04-20" readonly>
+          </div>
+          <div>
+            <label>EOBT (UTC)</label>
+            <input value="06:00" readonly>
+          </div>
+        </div>
+        <div style="margin-top: 10px;">
+          <label>Route texte ICAO</label>
+          <input value="TYE POLTO LAG L433 IBA R778 TEGDA MNA" readonly>
+        </div>
+        <div class="caption">Tokens résolus : TYE (VOR/BJ) · POLTO (FIX/BJ) · LAG (VOR/NG) · IBA (VOR/NG) · TEGDA (FIX/NG) · MNA (VOR/NG)</div>
+
+        <hr>
+
+        <div class="section-title">Leg 2</div>
+        <div class="row4">
+          <div>
+            <label>Origin (ICAO)</label>
+            <input value="DNMN" readonly>
+          </div>
+          <div>
+            <label>Destination (ICAO)</label>
+            <input value="DBBB" readonly>
+          </div>
+          <div>
+            <label>FL</label>
+            <input value="100" readonly>
+          </div>
+          <div>
+            <label>TAS (kt)</label>
+            <input value="140" readonly>
+          </div>
+        </div>
+        <div class="row" style="margin-top: 10px;">
+          <div>
+            <label>Date (UTC)</label>
+            <input value="2026-04-20" readonly>
+          </div>
+          <div>
+            <label>EOBT (UTC)</label>
+            <input value="12:00" readonly>
+          </div>
+        </div>
+        <div style="margin-top: 10px;">
+          <label>Route texte ICAO</label>
+          <input value="MNA MAGIA V377 LAG POLTO TYE" readonly>
+        </div>
+
+        <hr>
+
+        <button class="secondary">➕ Ajouter un leg</button>
+        <button class="secondary">➖ Retirer le dernier leg</button>
+
+        <hr>
+
+        <div class="section-title">Preview Appendix 1 (live)</div>
+        <div>
+          <div class="metric"><span class="num">354 NM</span><span class="lbl">Distance leg 1</span></div>
+          <div class="metric"><span class="num">152 min</span><span class="lbl">Temps de vol</span></div>
+          <div class="metric"><span class="num">2</span><span class="lbl">États traversés</span></div>
+        </div>
+        <div class="success">✓ Tous les waypoints résolus en base. Aucun warning.</div>
+
+        <hr>
+        <button>📄 Générer DIC .docx</button>
+      </div>
+    </div>
+
+    <!-- RIGHT : Rendered DIC document -->
+    <div class="card">
+      <header>
+        Aperçu du .docx généré
+        <span class="pill">Cotonou ↔ Minna · V2 · FRA</span>
+      </header>
+      <div class="body">
+        <div class="docx">
+          <h2 class="title">ANNEX A</h2>
+          <h1 class="title">FRA DIPLOMATIC CLEARANCE (DIC) FORM</h1>
+
+          <table>
+            <tr><td style="width:35%"><b>(1) Reference number:</b></td><td>MSG DU 10/04/2026</td></tr>
+            <tr><td><b>(2) Amendment number:</b></td><td>V2</td></tr>
+            <tr><td><b>Mission number:</b></td><td>06543-26/00</td></tr>
+          </table>
+
+          <table>
+            <tr><th>State</th><th>R</th><th>N</th><th>L</th><th>VIP</th><th>DG</th><th>A</th><th>FR</th><th>EXISTING DIC NUMBER</th></tr>
+            <tr class="bg-leg-head"><td colspan="9">Leg 1</td></tr>
+            <tr><td>Benin</td><td class="x-cell">X</td><td></td><td class="x-cell">X</td><td></td><td></td><td></td><td>I</td><td></td></tr>
+            <tr><td>Nigeria</td><td class="x-cell">X</td><td></td><td class="x-cell">X</td><td></td><td></td><td></td><td>I</td><td>FRANCE2026 / MIL-BLK / 21 A /130426</td></tr>
+            <tr class="bg-leg-head"><td colspan="9">Leg 2</td></tr>
+            <tr><td>Nigeria</td><td class="x-cell">X</td><td></td><td></td><td></td><td></td><td></td><td>I</td><td>FRANCE2026 / MIL-BLK / 21 A /130426</td></tr>
+            <tr><td>Benin</td><td class="x-cell">X</td><td></td><td class="x-cell">X</td><td></td><td></td><td></td><td>I</td><td></td></tr>
+          </table>
+
+          <table>
+            <tr><th style="width:8%">SERIAL</th><th style="width:42%">REQUESTED INFORMATION</th><th>INFORMATION SUBMITTED</th></tr>
+            <tr class="bg-section"><td></td><td>AIRCRAFT AND CREW</td><td></td></tr>
+            <tr><td>(12)</td><td>Requesting state</td><td>FRANCE</td></tr>
+            <tr><td>(12a)</td><td>Operator</td><td>AMAZONE AIRLINES / DYNAMI AVIATION OPS</td></tr>
+            <tr><td>(13)</td><td>Number and type of aircraft</td><td>1  DHC6-400</td></tr>
+            <tr><td>(14)</td><td>Aircraft registration</td><td>TY-BAB</td></tr>
+            <tr><td>(15)</td><td>Spare aircraft</td><td>TY-BAB OR SUBSTITUTE</td></tr>
+            <tr><td>(16)</td><td>Callsign (including spare if different)</td><td>TY-BAB</td></tr>
+            <tr><td>(17)</td><td>Number of crew members</td><td>02</td></tr>
+            <tr><td>(18)</td><td>Pilot rank and name</td><td>Aditya Tri Hertiawan and Saba Muhammad</td></tr>
+            <tr><td>(19)</td><td>Photographic sensors and/or cameras</td><td>NO</td></tr>
+            <tr><td>(20)</td><td>Armament</td><td>NO</td></tr>
+            <tr><td>(21)</td><td>Electronic warfare equipment</td><td>NO</td></tr>
+            <tr class="bg-section"><td></td><td>FLIGHT DETAILS (Detailed routing in Appendix 1)</td><td></td></tr>
+            <tr><td>(22)</td><td>Date of flight</td><td>20 APR 2026</td></tr>
+            <tr><td>(23)</td><td>Purpose of flight</td><td>LOGISTIC FLIGHT WITHOUT DANGEROUS GOODS</td></tr>
+            <tr><td>(24)</td><td>Departure airport</td><td>COTONOU (DBBB) / MINNA (DNMN)</td></tr>
+            <tr><td>(25)</td><td>Destination airport(s)</td><td>MINNA (DNMN) / COTONOU (DBBB)</td></tr>
+            <tr><td>(26)</td><td>Alternate airport(s)</td><td>ABUJA (DNAA) / LOME (DXXX)</td></tr>
+            <tr><td>(27)</td><td>Radio frequencies</td><td>VHF</td></tr>
+            <tr class="bg-section"><td></td><td>LOAD INFORMATION</td><td></td></tr>
+            <tr><td>(28)</td><td>Number of passengers</td><td>TBN</td></tr>
+            <tr><td>(29)</td><td>VIP title/rank and name</td><td>TBN</td></tr>
+            <tr><td>(30)</td><td>DG details</td><td>NIL</td></tr>
+            <tr class="bg-section"><td></td><td>POINT OF CONTACT</td><td></td></tr>
+            <tr><td>(32)</td><td>Rank, name, first name</td><td>OF1 MERLIN</td></tr>
+            <tr><td>(33)</td><td>Telephone number</td><td>+ 225 07 15 013 761</td></tr>
+            <tr><td>(34)</td><td>Personal E-mail</td><td>cos-det14.j10@intradef.gouv.fr</td></tr>
+          </table>
+
+          <div class="page-break">— page 2 — APPENDIX 1 · DETAILED ITINERARY —</div>
+
+          <div style="font-weight:600; margin-bottom: 4px;">Leg 1  COTONOU (DBBB) → MINNA (DNMN)  ·  Callsign: TY-BAB</div>
+          <table>
+            <tr><th>State</th><th>Entry point + EOBT</th><th>Route over Territory</th><th>Exit point + EIBT</th><th>FL</th><th>TAS</th></tr>
+            <tr>
+              <td>BENIN</td>
+              <td>COTONOU (DBBB)<br>20/04/2026, 06.00</td>
+              <td>DBBB - TYE - POLTO</td>
+              <td>EXIT BENIN · POLTO<br>20/04/2026, 06.10</td>
+              <td class="center">90</td>
+              <td class="center">140</td>
+            </tr>
+            <tr>
+              <td>NIGERIA</td>
+              <td>ENTRY NIGERIA · POLTO<br>20/04/2026, 06.10</td>
+              <td>POLTO - LAG - L433 - IBA - R778 - TEGDA - MNA</td>
+              <td>MINNA (DNMN)<br>20/04/2026, 08.31</td>
+              <td class="center">90</td>
+              <td class="center">140</td>
+            </tr>
+          </table>
+
+          <div style="font-weight:600; margin: 14px 0 4px 0;">Leg 2  MINNA (DNMN) → COTONOU (DBBB)  ·  Callsign: TY-BAB</div>
+          <table>
+            <tr><th>State</th><th>Entry point + EOBT</th><th>Route over Territory</th><th>Exit point + EIBT</th><th>FL</th><th>TAS</th></tr>
+            <tr>
+              <td>NIGERIA</td>
+              <td>MINNA (DNMN)<br>20/04/2026, 12.00</td>
+              <td>MNA - MAGIA - V377 - LAG - POLTO</td>
+              <td>EXIT NIGERIA · POLTO<br>20/04/2026, 14.16</td>
+              <td class="center">100</td>
+              <td class="center">140</td>
+            </tr>
+            <tr>
+              <td>BENIN</td>
+              <td>ENTRY BENIN · POLTO<br>20/04/2026, 14.16</td>
+              <td>POLTO - TYE - DBBB</td>
+              <td>COTONOU (DBBB)<br>20/04/2026, 14.27</td>
+              <td class="center">100</td>
+              <td class="center">140</td>
+            </tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="legend">
+    <b>Comment lire cet aperçu</b><br>
+    • Le panneau gauche reproduit fidèlement l'écran Streamlit "Legs" que tu aurais sous les yeux en lançant <code>streamlit run app/main.py</code>.<br>
+    • Le panneau droit est le <code>.docx</code> rendu visuellement : structure tables identique à ce que python-docx produit (cf. <code>dic-agent/sample-outputs/DIC_COTONOU_MINNA_COTONOU.docx</code>).<br>
+    • Les heures à droite sont calculées par le moteur de route : départ 06h00 UTC, traversée frontière BJ→NG à POLTO en +10 min, arrivée Minna en +2h31. Tu peux refaire le calcul à la main : 354 NM ÷ 140 kt × 60 = 152 min ≈ 2h32.<br>
+    • Le tableau états en haut a R/L cochés sur Bénin (origine/destination) et Nigeria (destination intermédiaire) — auto-déterminé par le moteur.
+  </div>
+</div>
+</body>
+</html>
