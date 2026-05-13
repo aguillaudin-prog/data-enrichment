@@ -69,6 +69,22 @@ python -m app.import_xplane_navdata --dir ~/xplane_navdata/
 ≈ 1-2 min d'import. À refaire à chaque cycle AIRAC (28 jours) si tu veux rester
 à jour.
 
+### Procédures SID / STAR (CIFP, optionnel)
+
+X-Plane bundle aussi le dossier `CIFP/` (~5000 fichiers, un par aéroport) qui
+contient les **procédures normalisées** : SIDs (départ), STARs (arrivée),
+approches. Une fois importées, l'app affiche les SIDs disponibles pour
+l'aérodrome de départ et les STARs pour celui d'arrivée, dans l'éditeur de
+leg. La sélection insère automatiquement le nom de procédure dans la route.
+
+```bash
+python -m app.import_cifp --dir "C:/X-Plane 12/Resources/default data/CIFP"
+```
+
+≈ 1-3 min selon ton disque. Idempotent. Si tu n'as pas de CIFP, les
+dropdowns SID/STAR n'apparaissent simplement pas — le reste de l'app
+fonctionne pareil.
+
 ## Structure
 
 ```

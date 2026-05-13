@@ -119,6 +119,18 @@ CREATE TABLE IF NOT EXISTS country (
     geom_geojson TEXT
 );
 
+CREATE TABLE IF NOT EXISTS procedure (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    airport_icao TEXT NOT NULL,
+    proc_type TEXT NOT NULL CHECK (proc_type IN ('SID', 'STAR', 'APPCH')),
+    proc_name TEXT NOT NULL,
+    runways_csv TEXT,
+    waypoints_json TEXT NOT NULL,
+    UNIQUE (airport_icao, proc_type, proc_name)
+);
+CREATE INDEX IF NOT EXISTS idx_proc_airport_type ON procedure(airport_icao, proc_type);
+CREATE INDEX IF NOT EXISTS idx_proc_name ON procedure(proc_name);
+
 CREATE TABLE IF NOT EXISTS airway_segment (
     from_ident TEXT NOT NULL,
     from_region TEXT,
@@ -163,6 +175,7 @@ def _migrate(conn) -> None:
     tpl_cols = {row[1] for row in cur.fetchall()}
     if tpl_cols and "category" not in tpl_cols:
         conn.execute("ALTER TABLE route_template ADD COLUMN category TEXT")
+    # `procedure` table is created by SCHEMA on init; no column migration yet.
 
 
 def init_schema() -> None:
@@ -414,6 +427,40 @@ def save_user_waypoint(ident: str, lat: float, lon: float, region: str | None = 
             """,
             (ident.strip().upper(), region or "", lat, lon, kind),
         )
+
+
+def upsert_procedures(rows: Iterable[dict]) -> int:
+    sql = """
+    INSERT INTO procedure (airport_icao, proc_type, proc_name, runways_csv, waypoints_json)
+    VALUES (:airport_icao, :proc_type, :proc_name, :runways_csv, :waypoints_json)
+    ON CONFLICT(airport_icao, proc_type, proc_name) DO UPDATE SET
+        runways_csv = excluded.runways_csv,
+        waypoints_json = excluded.waypoints_json
+    """
+    n = 0
+    with connect() as c:
+        for r in rows:
+            c.execute(sql, r)
+            n += 1
+    return n
+
+
+def list_procedures(airport_icao: str, proc_type: str | None = None) -> list[sqlite3.Row]:
+    with connect() as c:
+        if proc_type:
+            return c.execute(
+                "SELECT * FROM procedure WHERE airport_icao = ? AND proc_type = ? ORDER BY proc_name",
+                (airport_icao.strip().upper(), proc_type),
+            ).fetchall()
+        return c.execute(
+            "SELECT * FROM procedure WHERE airport_icao = ? ORDER BY proc_type, proc_name",
+            (airport_icao.strip().upper(),),
+        ).fetchall()
+
+
+def count_procedures() -> int:
+    with connect() as c:
+        return c.execute("SELECT COUNT(*) FROM procedure").fetchone()[0]
 
 
 def upsert_airway_segments(rows: Iterable[dict]) -> int:
