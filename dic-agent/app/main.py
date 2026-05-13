@@ -1,0 +1,415 @@
+"""Streamlit entrypoint — DIC Agent.
+
+Run: streamlit run app/main.py
+"""
+from __future__ import annotations
+
+import datetime as dt
+import json
+from pathlib import Path
+
+import streamlit as st
+
+from app import db, docx_generator, route_engine
+
+st.set_page_config(page_title="DIC Agent", layout="wide")
+
+DB_FILE = Path(__file__).resolve().parent.parent / "data" / "dic.sqlite"
+if not DB_FILE.exists():
+    st.error(
+        "Base SQLite absente. Lance d'abord : `python -m app.seed_db` pour télécharger "
+        "aéroports / NAVAID / frontières d'États (~150 Mo, premier run uniquement)."
+    )
+    st.stop()
+
+
+@st.cache_data(ttl=600)
+def country_index_cached():
+    return route_engine._build_country_index()
+
+
+def _aircraft_picker(key_prefix: str) -> dict:
+    rows = db.list_aircraft()
+    options = ["— nouveau —"] + [
+        f"{r['registration']} / {r['type_icao'] or '?'} / {r['operator'] or '?'}" for r in rows
+    ]
+    sel = st.selectbox("Profil appareil", options, key=f"{key_prefix}_ap_sel")
+    if sel != "— nouveau —":
+        idx = options.index(sel) - 1
+        r = rows[idx]
+        st.caption(
+            f"reg `{r['registration']}` • type `{r['type_icao']}` • callsign `{r['callsign']}` • op `{r['operator']}`"
+        )
+        return {
+            "registration": r["registration"],
+            "type_icao": r["type_icao"],
+            "callsign": r["callsign"],
+            "operator": r["operator"],
+        }
+    c1, c2 = st.columns(2)
+    with c1:
+        reg = st.text_input("Immatriculation", key=f"{key_prefix}_reg").strip().upper()
+        type_icao = st.text_input(
+            "Type ICAO (ex. DHC6, A400, B738…)", key=f"{key_prefix}_type"
+        ).strip().upper()
+    with c2:
+        callsign = st.text_input("Callsign", key=f"{key_prefix}_cs").strip().upper()
+        operator = st.text_input("Opérateur", key=f"{key_prefix}_op").strip()
+
+    if type_icao:
+        types = db.list_aircraft_types(type_icao)
+        if types:
+            t = types[0]
+            st.caption(
+                f"Type connu : **{t['icao_designator']}** — {t['full_name']} • "
+                f"cruise TAS {t['cruise_tas_kt']} kt • ceiling {t['service_ceiling_ft']} ft"
+            )
+        else:
+            st.warning(f"Type `{type_icao}` inconnu en base — il sera quand même accepté.")
+
+    if reg and st.button("💾 Sauver profil appareil", key=f"{key_prefix}_save_ap"):
+        db.save_aircraft(reg, type_icao or None, callsign or None, operator or None)
+        st.success(f"Profil {reg} enregistré.")
+        st.rerun()
+    return {"registration": reg, "type_icao": type_icao, "callsign": callsign, "operator": operator}
+
+
+def _crew_picker(key_prefix: str) -> dict:
+    rows = db.list_crews()
+    options = ["— nouveau —"] + [r["name"] for r in rows]
+    sel = st.selectbox("Profil équipage", options, key=f"{key_prefix}_crew_sel")
+    if sel != "— nouveau —":
+        r = next(x for x in rows if x["name"] == sel)
+        members = json.loads(r["members_json"])
+        pilots = " + ".join(f"{m.get('rank','')} {m.get('name','')}".strip() for m in members)
+        st.caption(f"{r['n_crew']} crew — {pilots}")
+        return {"n_crew": r["n_crew"], "pilots": pilots, "members": members}
+    c1, c2, c3 = st.columns([1, 2, 2])
+    with c1:
+        n_crew = st.number_input("N. crew", min_value=1, value=2, key=f"{key_prefix}_ncrew")
+    with c2:
+        pilots = st.text_input(
+            "Pilotes (ex. 'CPT Aditya Tri Hertiawan + FO Saba Muhammad')",
+            key=f"{key_prefix}_pilots",
+        )
+    with c3:
+        save_name = st.text_input("Nom du profil (pour sauver)", key=f"{key_prefix}_crew_name")
+    if save_name and pilots and st.button("💾 Sauver équipage", key=f"{key_prefix}_save_crew"):
+        members = [{"rank": "", "name": p.strip()} for p in pilots.split("+")]
+        db.save_crew(save_name, members, int(n_crew))
+        st.success("Équipage enregistré.")
+        st.rerun()
+    return {"n_crew": int(n_crew), "pilots": pilots, "members": []}
+
+
+def _poc_picker(key_prefix: str) -> dict:
+    rows = db.list_pocs()
+    options = ["— nouveau —"] + [f"{r['rank'] or ''} {r['name']}".strip() for r in rows]
+    sel = st.selectbox("Profil POC", options, key=f"{key_prefix}_poc_sel")
+    if sel != "— nouveau —":
+        idx = options.index(sel) - 1
+        r = rows[idx]
+        return {
+            "name": f"{r['rank'] or ''} {r['name']}".strip(),
+            "phone": r["phone"] or "",
+            "email_personal": r["email_personal"] or "",
+            "email_functional": r["email_functional"] or "",
+            "fax": r["fax"] or "",
+        }
+    c1, c2 = st.columns(2)
+    with c1:
+        rank = st.text_input("Grade", key=f"{key_prefix}_poc_rank")
+        name = st.text_input("Nom prénom", key=f"{key_prefix}_poc_name")
+        phone = st.text_input("Téléphone", key=f"{key_prefix}_poc_phone")
+    with c2:
+        email_p = st.text_input("Email perso", key=f"{key_prefix}_poc_emailp")
+        email_f = st.text_input("Email fonctionnel", key=f"{key_prefix}_poc_emailf")
+        fax = st.text_input("Fax", key=f"{key_prefix}_poc_fax")
+    if name and st.button("💾 Sauver POC", key=f"{key_prefix}_save_poc"):
+        db.save_poc(rank, name, phone, email_p, email_f, fax)
+        st.success("POC enregistré.")
+        st.rerun()
+    return {
+        "name": f"{rank} {name}".strip(),
+        "phone": phone,
+        "email_personal": email_p,
+        "email_functional": email_f,
+        "fax": fax,
+    }
+
+
+def _leg_editor(idx: int, leg: dict) -> dict:
+    st.markdown(f"### Leg {idx + 1}")
+    c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
+    with c1:
+        origin = st.text_input(
+            "Origin (ICAO)", value=leg.get("origin", ""), key=f"leg_{idx}_orig"
+        ).strip().upper()
+    with c2:
+        destination = st.text_input(
+            "Destination (ICAO)", value=leg.get("destination", ""), key=f"leg_{idx}_dest"
+        ).strip().upper()
+    with c3:
+        fl = st.number_input("FL", min_value=0, max_value=600, value=int(leg.get("fl", 90)), step=10, key=f"leg_{idx}_fl")
+    with c4:
+        tas = st.number_input("TAS (kt)", min_value=50, max_value=900, value=int(leg.get("tas", 140)), step=10, key=f"leg_{idx}_tas")
+
+    c5, c6 = st.columns(2)
+    with c5:
+        d = st.date_input("Date (UTC)", value=leg.get("date", dt.date.today()), key=f"leg_{idx}_date")
+    with c6:
+        t = st.time_input(
+            "EOBT (UTC)",
+            value=leg.get("eobt_time", dt.time(0, 0)),
+            key=f"leg_{idx}_eobt",
+        )
+    eobt = dt.datetime.combine(d, t).replace(tzinfo=dt.timezone.utc)
+
+    route_text = st.text_input(
+        "Route texte ICAO (ex. `TYE POLTO LAG L433 IBA R778 TEGDA MNA`)",
+        value=leg.get("route_text", ""),
+        key=f"leg_{idx}_route",
+    )
+
+    return {
+        "origin": origin,
+        "destination": destination,
+        "fl": int(fl),
+        "tas": int(tas),
+        "date": d,
+        "eobt_time": t,
+        "eobt": eobt,
+        "route_text": route_text,
+    }
+
+
+def _resolve_country_for_airport(icao: str) -> str | None:
+    ap = db.find_airport(icao)
+    return ap["country_iso"] if ap else None
+
+
+def _missing_point_form(label: str, key: str) -> None:
+    with st.expander(f"Résoudre '{label}'"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            lat = st.number_input("Latitude (°)", value=0.0, format="%.6f", key=f"{key}_lat")
+        with c2:
+            lon = st.number_input("Longitude (°)", value=0.0, format="%.6f", key=f"{key}_lon")
+        with c3:
+            region = st.text_input("Région ISO (ex. NG, BJ — optionnel)", key=f"{key}_region").upper()
+        if st.button(f"Ajouter {label}", key=f"{key}_add"):
+            if label.startswith(("N", "S")) and "/" in label:
+                st.error("Coordonnée brute déjà parseable — ne pas la rajouter.")
+            else:
+                db.save_user_waypoint(label, float(lat), float(lon), region or None)
+                st.success(f"Waypoint {label} sauvé. Relance le calcul.")
+                st.rerun()
+
+
+# ============ UI ============
+
+st.title("🛩️ DIC Agent — Diplomatic Clearance generator")
+st.caption("FRA / ICAO — application locale. Données : OurAirports + Natural Earth.")
+
+with st.sidebar:
+    st.header("Paramètres")
+    template_format = st.radio("Format DIC", ["FRA", "ICAO"], horizontal=True)
+    st.divider()
+    st.caption(
+        "Tip : pour un point de coordonnées brutes, saisir au format "
+        "`N 9°34'45.56\" / E 3°14'7.09\"` ou `N9 34 45 / E3 14 7`."
+    )
+
+tab_mission, tab_legs, tab_preview = st.tabs(
+    ["1️⃣ Mission & profils", "2️⃣ Legs", "3️⃣ Preview & export"]
+)
+
+if "legs" not in st.session_state:
+    st.session_state.legs = [
+        {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
+    ]
+
+with tab_mission:
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        reference = st.text_input("Reference number", value="MSG DU " + dt.date.today().strftime("%d/%m/%Y"))
+    with c2:
+        amendment = st.text_input("Amendment", value="V1")
+    with c3:
+        mission_number = st.text_input("Mission number", value="")
+
+    st.divider()
+    st.subheader("Appareil")
+    ap = _aircraft_picker("mission")
+    st.divider()
+    st.subheader("Équipage")
+    crew = _crew_picker("mission")
+    st.divider()
+    st.subheader("POC")
+    poc = _poc_picker("mission")
+
+    st.divider()
+    st.subheader("Indicateurs")
+    ic1, ic2, ic3, ic4, ic5 = st.columns(5)
+    with ic1:
+        sensors = "YES" if st.checkbox("Capteurs / caméras") else "NO"
+    with ic2:
+        armament = "YES" if st.checkbox("Armement") else "NO"
+    with ic3:
+        ew = "YES" if st.checkbox("Guerre électronique") else "NO"
+    with ic4:
+        has_vip = st.checkbox("VIP à bord")
+    with ic5:
+        has_dg = st.checkbox("Dangerous Goods")
+
+    st.subheader("Vol")
+    purpose = st.text_input("Purpose of flight", value="LOGISTIC FLIGHT WITHOUT DANGEROUS GOODS")
+    alternates = st.text_input("Alternates (ICAO list)", value="")
+    radio_freq = st.text_input("Radio frequencies", value="VHF")
+    n_passengers = st.text_input("Number of passengers", value="TBN")
+    vip_title = st.text_input("VIP title/rank and name", value="NIL" if not has_vip else "TBN")
+    dg_details = st.text_input("DG details", value="NIL" if not has_dg else "TBN")
+    remarks = st.text_area("Remarks", value="")
+
+    st.session_state.mission = {
+        "reference": reference,
+        "amendment": amendment,
+        "mission_number": mission_number,
+        "template_format": template_format,
+        "requesting_state": "FRANCE",
+        "operator": ap.get("operator", ""),
+        "aircraft_count_type": f"1  {ap.get('type_icao','')}",
+        "registration": ap.get("registration", ""),
+        "spare_aircraft": f"{ap.get('registration','')} OR SUBSTITUTE",
+        "callsign": ap.get("callsign", ""),
+        "n_crew": crew.get("n_crew", 2),
+        "pilots": crew.get("pilots", ""),
+        "sensors": sensors,
+        "armament": armament,
+        "ew": ew,
+        "purpose": purpose,
+        "alternates": alternates,
+        "radio_frequencies": radio_freq,
+        "n_passengers": n_passengers,
+        "vip_title": vip_title,
+        "dg_details": dg_details,
+        "remarks": remarks,
+        "poc_name": poc.get("name", ""),
+        "poc_phone": poc.get("phone", ""),
+        "poc_email_personal": poc.get("email_personal", ""),
+        "poc_email_functional": poc.get("email_functional", ""),
+        "poc_fax": poc.get("fax", ""),
+        "vip_flag": has_vip,
+        "dg_flag": has_dg,
+    }
+
+
+with tab_legs:
+    if st.button("➕ Ajouter un leg"):
+        st.session_state.legs.append(
+            {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
+        )
+    if len(st.session_state.legs) > 1 and st.button("➖ Retirer le dernier leg"):
+        st.session_state.legs.pop()
+    for i, leg in enumerate(st.session_state.legs):
+        st.session_state.legs[i] = _leg_editor(i, leg)
+        st.divider()
+
+
+with tab_preview:
+    if not st.session_state.legs or not any(l.get("origin") for l in st.session_state.legs):
+        st.info("Saisis au moins un leg avec une origine.")
+        st.stop()
+
+    idx = country_index_cached()
+    leg_payloads: list[dict] = []
+    all_warnings: list[str] = []
+    departures = []
+    destinations = []
+    date_range_min = None
+    date_range_max = None
+
+    for i, leg in enumerate(st.session_state.legs):
+        if not leg.get("origin") or not leg.get("destination"):
+            continue
+        st.markdown(f"#### Leg {i + 1} — {leg['origin']} → {leg['destination']}")
+        resolution = route_engine.compute_leg(
+            eobt=leg["eobt"],
+            origin_icao=leg["origin"],
+            destination_icao=leg["destination"],
+            route_text=leg["route_text"],
+            fl=leg["fl"],
+            tas_kt=leg["tas"],
+            country_index=idx,
+        )
+        if resolution.warnings:
+            for w in resolution.warnings:
+                st.warning(w)
+                all_warnings.append(w)
+
+        for p in resolution.points:
+            if p.missing:
+                _missing_point_form(p.label, key=f"miss_{i}_{p.label}")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Distance", f"{resolution.total_distance_nm:.0f} NM")
+        c2.metric("Temps de vol", f"{resolution.total_time_min:.0f} min")
+        c3.metric("Pays traversés", str(len(resolution.segments)))
+
+        rows_view = []
+        for seg in resolution.segments:
+            rows_view.append(
+                {
+                    "State": seg.state_name,
+                    "Entry": f"{seg.entry_label} · {route_engine.format_zulu(seg.entry_time, template_format) if seg.entry_time else ''}",
+                    "Route": seg.route_in_country,
+                    "Exit": f"{seg.exit_label} · {route_engine.format_zulu(seg.exit_time, template_format) if seg.exit_time else ''}",
+                    "FL": seg.fl,
+                    "TAS": seg.tas,
+                }
+            )
+        st.dataframe(rows_view, use_container_width=True)
+
+        leg_input = {
+            "origin": leg["origin"],
+            "destination": leg["destination"],
+            "origin_iso": _resolve_country_for_airport(leg["origin"]),
+            "destination_iso": _resolve_country_for_airport(leg["destination"]),
+            "overrides": {},
+        }
+        leg_payloads.append(docx_generator.serialize_leg(leg_input, resolution, template_format))
+        departures.append(leg["origin"])
+        destinations.append(leg["destination"])
+        date_range_min = leg["eobt"].date() if date_range_min is None else min(date_range_min, leg["eobt"].date())
+        date_range_max = leg["eobt"].date() if date_range_max is None else max(date_range_max, leg["eobt"].date())
+
+    mission = dict(st.session_state.mission)
+    mission["departure_airport"] = " / ".join(departures)
+    mission["destination_airport"] = " / ".join(destinations)
+    if date_range_min and date_range_max:
+        if date_range_min == date_range_max:
+            mission["date_of_flight"] = date_range_min.strftime("%d %b %Y").upper()
+        else:
+            mission["date_of_flight"] = (
+                f"{date_range_min.strftime('%d %b').upper()} TO "
+                f"{date_range_max.strftime('%d %b %Y').upper()}"
+            )
+
+    st.divider()
+    if st.button("📄 Générer DIC .docx", type="primary"):
+        if all_warnings:
+            st.warning("Des warnings subsistent — le doc sera généré mais à vérifier.")
+        data = docx_generator.build_dic_document(mission, leg_payloads)
+        fn_parts = [
+            "DIC",
+            (mission.get("registration") or "").replace("/", "-"),
+            "_".join(departures + destinations[-1:]),
+            (mission.get("amendment") or "V1"),
+        ]
+        filename = "_".join(p for p in fn_parts if p) + ".docx"
+        st.download_button(
+            "⬇️ Télécharger",
+            data=data,
+            file_name=filename,
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )

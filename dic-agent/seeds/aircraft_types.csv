@@ -1,0 +1,143 @@
+icao_designator,full_name,manufacturer,cruise_tas_kt,service_ceiling_ft,range_nm,wake_category
+DHC6,De Havilland Canada DHC-6 Twin Otter,De Havilland Canada,140,25000,800,L
+DHC8,Bombardier Dash 8 Q400,Bombardier,360,27000,1100,M
+ATR42,ATR 42,ATR,300,25000,840,M
+ATR72,ATR 72,ATR,275,25000,825,M
+C130,Lockheed C-130 Hercules,Lockheed,290,33000,2050,M
+C30J,Lockheed C-130J Super Hercules,Lockheed,348,28000,1800,M
+C160,Transall C-160,Transall,265,27000,2200,M
+C17,Boeing C-17 Globemaster III,Boeing,450,45000,2400,H
+A400,Airbus A400M Atlas,Airbus,422,40000,3450,H
+A310,Airbus A310 MRTT,Airbus,460,41000,4500,H
+A330,Airbus A330 MRTT,Airbus,470,41000,7400,H
+A332,Airbus A330-200,Airbus,470,41000,7250,H
+B742,Boeing 747-200,Boeing,490,45000,6500,H
+B744,Boeing 747-400,Boeing,490,45100,7670,H
+B748,Boeing 747-8,Boeing,495,43100,8000,H
+B772,Boeing 777-200,Boeing,490,43100,5240,H
+B77L,Boeing 777-200LR,Boeing,490,43100,8555,H
+B788,Boeing 787-8,Boeing,488,43000,7355,H
+B763,Boeing 767-300,Boeing,470,43100,5990,H
+B752,Boeing 757-200,Boeing,470,42000,3915,M
+B737,Boeing 737-700,Boeing,453,41000,3010,M
+B738,Boeing 737-800,Boeing,453,41000,2935,M
+B739,Boeing 737-900,Boeing,453,41000,2950,M
+B73G,Boeing 737-700 BBJ,Boeing,453,41000,6000,M
+A319,Airbus A319,Airbus,447,39800,3700,M
+A320,Airbus A320,Airbus,447,39800,3300,M
+A321,Airbus A321,Airbus,447,39800,3200,M
+A359,Airbus A350-900,Airbus,488,43100,8100,H
+E145,Embraer ERJ-145,Embraer,440,37000,1550,M
+E170,Embraer 170,Embraer,448,41000,2150,M
+E190,Embraer 190,Embraer,448,41000,2400,M
+CRJ2,Bombardier CRJ-200,Bombardier,424,41000,1645,M
+CRJ7,Bombardier CRJ-700,Bombardier,447,41000,1820,M
+CRJ9,Bombardier CRJ-900,Bombardier,447,41000,1820,M
+F2TH,Dassault Falcon 2000,Dassault,460,47000,3350,M
+F900,Dassault Falcon 900,Dassault,485,51000,4500,M
+F7X,Dassault Falcon 7X,Dassault,488,51000,5950,M
+FA50,Dassault Falcon 50,Dassault,460,49000,3000,M
+GLF5,Gulfstream G550,Gulfstream,488,51000,6750,M
+GLF6,Gulfstream G650,Gulfstream,488,51000,7000,M
+GLF4,Gulfstream G450,Gulfstream,476,45000,4350,M
+C56X,Cessna Citation Excel/XLS,Cessna,441,45000,1858,L
+C68A,Cessna Citation Latitude,Cessna,446,45000,2700,M
+C25A,Cessna CitationJet CJ2,Cessna,413,45000,1613,L
+P180,Piaggio P.180 Avanti,Piaggio,395,41000,1500,L
+PC12,Pilatus PC-12,Pilatus,280,30000,1845,L
+PC24,Pilatus PC-24,Pilatus,440,45000,2000,L
+TBM9,Daher TBM 930,Daher,330,31000,1730,L
+KODI,Daher Kodiak 100,Daher,174,25000,1132,L
+B350,Beechcraft King Air 350,Beechcraft,312,35000,1806,L
+BE20,Beechcraft King Air 200,Beechcraft,289,35000,1580,L
+BE9L,Beechcraft King Air C90,Beechcraft,272,30000,1330,L
+BE58,Beechcraft Baron 58,Beechcraft,200,20688,1480,L
+SR22,Cirrus SR22,Cirrus,183,17500,1170,L
+DA42,Diamond DA42,Diamond,170,18000,1130,L
+DA62,Diamond DA62,Diamond,192,20000,1300,L
+C172,Cessna 172 Skyhawk,Cessna,124,13500,640,L
+C208,Cessna 208 Caravan,Cessna,186,25000,964,L
+AN12,Antonov An-12,Antonov,360,33500,3100,H
+AN24,Antonov An-24,Antonov,243,27600,1300,M
+AN26,Antonov An-26,Antonov,235,24600,1430,M
+AN30,Antonov An-30,Antonov,235,27000,1430,M
+AN32,Antonov An-32,Antonov,260,31200,1170,M
+AN72,Antonov An-72,Antonov,378,38000,2700,M
+AN74,Antonov An-74,Antonov,378,38000,2700,M
+AN124,Antonov An-124,Antonov,432,39400,3200,H
+AN225,Antonov An-225,Antonov,459,36000,8400,H
+IL62,Ilyushin Il-62,Ilyushin,460,40000,5500,H
+IL76,Ilyushin Il-76,Ilyushin,486,42700,2700,H
+IL96,Ilyushin Il-96,Ilyushin,470,39400,6200,H
+TU154,Tupolev Tu-154,Tupolev,486,39400,3500,H
+YK40,Yakovlev Yak-40,Yakovlev,297,26250,1180,M
+SU95,Sukhoi Superjet 100,Sukhoi,442,40000,2470,M
+KC30,Airbus KC-30 MRTT (Australia),Airbus,470,41000,7400,H
+KC46,Boeing KC-46 Pegasus,Boeing,460,43100,6385,H
+KC135,Boeing KC-135 Stratotanker,Boeing,460,50000,1303,H
+KC10,McDonnell Douglas KC-10 Extender,McDonnell Douglas,490,42000,4400,H
+P3,Lockheed P-3 Orion,Lockheed,328,28300,4830,M
+P8,Boeing P-8 Poseidon,Boeing,440,41000,4500,M
+ATL2,Dassault Atlantique 2,Dassault,355,30000,4855,M
+E3,Boeing E-3 Sentry AWACS,Boeing,460,42000,4400,H
+E2,Northrop Grumman E-2 Hawkeye,Grumman,300,34700,1462,M
+MRJ,Mitsubishi MRJ90 / SpaceJet,Mitsubishi,470,39000,2040,M
+F16,Lockheed Martin F-16 Fighting Falcon,Lockheed Martin,480,50000,2280,M
+F18,McDonnell Douglas F/A-18 Hornet,Boeing,468,50000,1275,M
+F18S,Boeing F/A-18E/F Super Hornet,Boeing,468,50000,1275,M
+F15,McDonnell Douglas F-15 Eagle,Boeing,468,65000,2400,M
+F22,Lockheed Martin F-22 Raptor,Lockheed Martin,584,65000,1600,M
+F35,Lockheed Martin F-35 Lightning II,Lockheed Martin,584,50000,1200,M
+TYPH,Eurofighter Typhoon,Eurofighter,584,65000,1840,M
+RAFL,Dassault Rafale,Dassault,584,50000,2000,M
+MIR2,Dassault Mirage 2000,Dassault,484,59000,1550,M
+SU27,Sukhoi Su-27 Flanker,Sukhoi,584,62500,1620,M
+SU30,Sukhoi Su-30,Sukhoi,584,57400,1620,M
+SU35,Sukhoi Su-35,Sukhoi,584,59100,1940,M
+MG29,Mikoyan MiG-29 Fulcrum,Mikoyan,594,59100,1130,M
+MG31,Mikoyan MiG-31 Foxhound,Mikoyan,627,67600,1620,H
+TOR,Panavia Tornado,Panavia,484,50000,1545,M
+ALPH,Alpha Jet,Dassault Dornier,540,48000,1800,L
+HAWK,BAE Hawk,BAE Systems,540,50000,1565,L
+T6,Beechcraft T-6 Texan II,Beechcraft,316,31000,850,L
+T38,Northrop T-38 Talon,Northrop,461,55000,1093,L
+M339,Aermacchi MB-339,Aermacchi,485,46700,930,L
+PC9,Pilatus PC-9,Pilatus,300,38000,860,L
+PC21,Pilatus PC-21,Pilatus,370,38000,720,L
+EMB1,Embraer KC-390 Millennium,Embraer,470,36000,3060,M
+SHRP,Sherpa C-23,Shorts,193,20000,770,L
+C295,CASA C-295,Airbus,260,30000,2500,M
+C235,CASA CN-235,Airbus,245,25000,2110,M
+H47,Boeing CH-47 Chinook,Boeing,160,18500,400,M
+EC75,Airbus Helicopters H175,Airbus,150,20000,580,M
+NH90,NHIndustries NH90,NHIndustries,140,20000,432,M
+CYCL,Sikorsky H-92 Cougar,Sikorsky,148,15000,540,M
+H60,Sikorsky UH-60 Black Hawk,Sikorsky,150,19000,320,M
+S76,Sikorsky S-76,Sikorsky,155,15000,400,M
+B412,Bell 412,Bell,122,20000,402,M
+B429,Bell 429,Bell,140,20000,370,L
+EC35,Airbus Helicopters H135,Airbus,140,20000,338,L
+EC45,Airbus Helicopters H145,Airbus,135,18000,360,L
+EC55,Airbus Helicopters H155,Airbus,153,20000,448,M
+AS32,Airbus Helicopters AS332 Super Puma,Airbus,143,15000,460,M
+EC25,Airbus Helicopters H225 Super Puma,Airbus,141,20000,476,M
+A139,AgustaWestland AW139,Leonardo,165,20000,500,M
+A189,Leonardo AW189,Leonardo,153,15000,545,M
+SF50,Cirrus SF50 Vision Jet,Cirrus,300,31000,1300,L
+PRM1,Beechcraft Premier I,Beechcraft,450,41000,1500,L
+HDJT,Honda HA-420 HondaJet,Honda,422,43000,1437,L
+PA46,Piper Malibu Mirage,Piper,213,25000,1345,L
+TBM7,Daher TBM 700,Daher,300,31000,1430,L
+GLEX,Bombardier Global Express,Bombardier,488,51000,6700,M
+GL5T,Bombardier Global 5000,Bombardier,488,51000,5200,M
+GL7T,Bombardier Global 7500,Bombardier,488,51000,7700,M
+CL30,Bombardier Challenger 300,Bombardier,470,45000,3065,M
+CL35,Bombardier Challenger 350,Bombardier,470,45000,3200,M
+CL60,Bombardier Challenger 605/650,Bombardier,470,41000,4000,M
+LJ40,Bombardier Learjet 40,Bombardier,460,51000,1700,M
+LJ45,Bombardier Learjet 45,Bombardier,460,51000,2000,M
+LJ60,Bombardier Learjet 60,Bombardier,464,51000,2405,M
+LJ75,Bombardier Learjet 75,Bombardier,464,51000,2040,M
+EUFI,Eurofighter Typhoon,Eurofighter,584,65000,1840,M
+JU52,Junkers Ju 52,Junkers,140,18045,540,L
+ZZZZ,Other / Not Listed,Unknown,,,,

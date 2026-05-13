@@ -1,0 +1,19 @@
+data/*.sqlite
+data/*.sqlite-journal
+
+# Downloaded datasets (OurAirports, Natural Earth) — not committed
+seeds/airports.csv
+seeds/navaids.csv
+seeds/ne_50m_admin_0_countries.geojson
+seeds/*.zip
+seeds/*.shp
+seeds/*.dbf
+seeds/*.shx
+seeds/*.prj
+
+# Curated/minimal seeds are tracked (aircraft_types.csv, minimal_*.csv, minimal_*.geojson)
+
+__pycache__/
+*.pyc
+.venv/
+out/

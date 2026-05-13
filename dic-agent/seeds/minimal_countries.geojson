@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {"type":"Feature","properties":{"ISO_A2":"BJ","ISO_A3":"BEN","NAME_EN":"Benin","NAME_FR":"Bénin"},
+     "geometry":{"type":"Polygon","coordinates":[[[0.77,6.22],[2.74,6.22],[2.74,9.0],[3.85,9.5],[3.85,12.4],[2.5,12.4],[1.0,11.0],[0.77,9.6],[0.77,6.22]]]}},
+    {"type":"Feature","properties":{"ISO_A2":"NG","ISO_A3":"NGA","NAME_EN":"Nigeria","NAME_FR":"Nigeria"},
+     "geometry":{"type":"Polygon","coordinates":[[[2.74,6.22],[5.0,4.6],[8.5,4.4],[10.2,4.6],[13.4,4.5],[14.6,6.0],[14.6,10.5],[13.5,12.3],[12.5,13.4],[7.5,13.7],[3.85,13.5],[3.85,12.4],[3.85,9.5],[2.74,9.0],[2.74,6.22]]]}},
+    {"type":"Feature","properties":{"ISO_A2":"TG","ISO_A3":"TGO","NAME_EN":"Togo","NAME_FR":"Togo"},
+     "geometry":{"type":"Polygon","coordinates":[[[-0.15,6.10],[1.78,6.22],[1.62,6.65],[1.62,11.1],[0.77,11.1],[-0.15,10.5],[-0.15,6.10]]]}},
+    {"type":"Feature","properties":{"ISO_A2":"GH","ISO_A3":"GHA","NAME_EN":"Ghana","NAME_FR":"Ghana"},
+     "geometry":{"type":"Polygon","coordinates":[[[-3.25,4.74],[1.20,5.85],[1.20,11.2],[-0.07,11.2],[-2.84,10.9],[-2.94,8.0],[-3.25,6.3],[-3.25,4.74]]]}},
+    {"type":"Feature","properties":{"ISO_A2":"CI","ISO_A3":"CIV","NAME_EN":"Cote d'Ivoire","NAME_FR":"Côte d'Ivoire"},
+     "geometry":{"type":"Polygon","coordinates":[[[-7.55,4.34],[-3.25,4.74],[-3.25,6.3],[-2.94,8.0],[-2.84,10.9],[-4.6,10.4],[-6.4,10.6],[-8.6,10.0],[-8.2,7.5],[-7.99,6.1],[-7.55,4.34]]]}}
+  ]
+}

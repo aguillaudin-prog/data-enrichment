@@ -1,0 +1,17 @@
+icao,iata,name,country_iso,lat,lon,elevation_ft,is_military
+DBBB,COO,Cadjehoun Airport,BJ,6.357230,2.384353,19,0
+DIAP,ABJ,Felix Houphouet Boigny International,CI,5.261390,-3.926290,21,0
+DIBK,BYK,Bouake Airport,CI,7.738830,-5.073670,1230,0
+DIKO,HGO,Korhogo Airport,CI,9.387170,-5.556650,1247,0
+DIYO,ASK,Yamoussoukro Airport,CI,6.903190,-5.365580,699,0
+DXXX,LFW,Lome-Tokoin Airport,TG,6.165610,1.254510,72,0
+DNMN,MXJ,Minna Airport,NG,9.652200,6.262220,834,0
+DNAA,ABV,Nnamdi Azikiwe International,NG,9.006790,7.263170,1123,0
+DNIL,ILR,Ilorin Airport,NG,8.440220,4.493920,1126,0
+DNIB,IBA,Ibadan Airport,NG,7.362460,3.978330,725,0
+DNKA,KAD,Kaduna Airport,NG,10.696000,7.320100,2073,0
+DNKN,KAN,Mallam Aminu Kano International,NG,12.047600,8.524620,1562,0
+DNLG,LOS,Murtala Muhammed International,NG,6.577400,3.321100,135,0
+DNKJ,KIN,Kainji NAFB,NG,9.890000,4.572500,1115,1
+DNPO,PHC,Port Harcourt International,NG,5.015490,6.949590,87,0
+DGAA,ACC,Kotoka International,GH,5.605190,-0.166790,205,0
