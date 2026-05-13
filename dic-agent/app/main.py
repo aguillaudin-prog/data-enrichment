@@ -480,22 +480,39 @@ with tab_legs:
         by_cat.setdefault(cat, []).append(r)
     cats = sorted(by_cat.keys())
 
-    def _on_dossier_change() -> None:
-        # Switch dossier → reset the Mission picker to 'Nouvelle mission' so we
-        # don't end up with a ghost selection from another folder.
-        st.session_state["tpl_sel"] = _NEW_MISSION_LABEL
-        _reset_to_blank_mission()
-
-    def _on_mission_change() -> None:
-        # Auto-apply the picked template (or reset if 'Nouvelle mission').
-        chosen = st.session_state.get("tpl_sel", _NEW_MISSION_LABEL)
-        if chosen == _NEW_MISSION_LABEL:
+    # ────────────────────────────────────────────────────────────────────
+    # Pending-application pattern.
+    #
+    # The Streamlit on_change callbacks below only *flag* what should happen
+    # (`_pending_mission`). The actual st.session_state.legs mutation and
+    # widget-key clearing run HERE, at the very top of the legs tab, BEFORE
+    # any leg widget is created in this rerun. This guarantees that newly
+    # rendered widgets read from the fresh st.session_state.legs and don't
+    # leak stale values from the previous mission.
+    # ────────────────────────────────────────────────────────────────────
+    pending = st.session_state.pop("_pending_mission", None)
+    if pending is not None:
+        if pending == _NEW_MISSION_LABEL:
             _reset_to_blank_mission()
         else:
-            cat_sel = st.session_state.get("tpl_cat", "— tous —")
-            filtered = tpl_rows if cat_sel == "— tous —" else by_cat.get(cat_sel, [])
-            _apply_template(chosen, filtered)
-            st.session_state["_loaded_tpl_name"] = chosen
+            cat_sel_now = st.session_state.get("tpl_cat", "— tous —")
+            filtered_now = (
+                tpl_rows if cat_sel_now == "— tous —" else by_cat.get(cat_sel_now, [])
+            )
+            _apply_template(pending, filtered_now)
+            st.session_state["_loaded_tpl_name"] = pending
+
+    def _on_dossier_change() -> None:
+        # Switching dossier resets the Mission picker AND flags a reset so the
+        # legs are wiped before the next render.
+        st.session_state["tpl_sel"] = _NEW_MISSION_LABEL
+        st.session_state["_pending_mission"] = _NEW_MISSION_LABEL
+
+    def _on_mission_change() -> None:
+        # Just flag — the apply logic lives at the top of the legs tab.
+        st.session_state["_pending_mission"] = st.session_state.get(
+            "tpl_sel", _NEW_MISSION_LABEL
+        )
 
     pc1, pc2 = st.columns([1, 3])
     with pc1:
