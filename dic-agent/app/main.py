@@ -6,7 +6,14 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import sys
 from pathlib import Path
+
+# Ensure the project root is on sys.path so `from app import ...` works
+# regardless of the directory `streamlit run` was launched from.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 import streamlit as st
 
