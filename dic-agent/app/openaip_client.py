@@ -25,6 +25,29 @@ from typing import Iterable
 import requests
 
 API_BASE = "https://api.core.openaip.net/api"
+
+
+def _load_dotenv() -> None:
+    """Lightweight .env loader (no external dependency).
+
+    Looks for `<project_root>/.env` and adds KEY=VALUE lines to os.environ
+    without overriding values that are already set.
+    """
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k = k.strip()
+        v = v.strip().strip('"').strip("'")
+        if k and k not in os.environ:
+            os.environ[k] = v
+
+
+_load_dotenv()
 SEEDS_DIR = Path(__file__).resolve().parent.parent / "seeds"
 SEEDS_DIR.mkdir(parents=True, exist_ok=True)
 

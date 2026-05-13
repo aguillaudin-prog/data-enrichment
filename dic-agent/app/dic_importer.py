@@ -242,7 +242,15 @@ def _normalize_route_cell(s: str) -> str:
     s = re.sub(r"\bDCT\b", " ", s, flags=re.IGNORECASE)
     s = re.sub(r"\s*-\s*", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
-    return s
+    # Glue 'G 851' → 'G851', 'UG 851' → 'UG851' (airway letter + number split by docx whitespace).
+    s = re.sub(r"\b([A-Z]{1,2})\s+(\d{2,4})\b", r"\1\2", s)
+    # Drop 1- and 2-letter tokens that are not valid airways (likely import noise like 'AD').
+    tokens = []
+    for t in s.split():
+        if len(t) < 3 and not re.fullmatch(r"[A-Z]{1,2}\d{1,4}", t):
+            continue
+        tokens.append(t)
+    return " ".join(tokens)
 
 
 def _column_indices(header_row: list[str]) -> dict[str, int]:

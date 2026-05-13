@@ -111,7 +111,19 @@ def _interp_great_circle(p1: tuple[float, float], p2: tuple[float, float], f: fl
     return math.degrees(lat), math.degrees(lon)
 
 
-def _resolve_token(token: str, region_hint: str | None = None) -> ResolvedPoint:
+def _resolve_token(
+    token: str,
+    region_hint: str | None = None,
+    near_pt: tuple[float, float] | None = None,
+    max_nm_from_near: float = 1500.0,
+) -> ResolvedPoint:
+    """Resolve a single route token to a geocoded point.
+
+    `near_pt` (lat, lon) is used when a token matches multiple waypoints
+    worldwide: we pick the closest one within `max_nm_from_near`. Without
+    this filter, an ambiguous ident like 'AD' resolves to some random point
+    on the globe.
+    """
     token = token.strip().upper()
     if not token:
         return ResolvedPoint(label=token, lat=None, lon=None, source="unknown", missing=True)
@@ -126,6 +138,13 @@ def _resolve_token(token: str, region_hint: str | None = None) -> ResolvedPoint:
     if AIRWAY_RE.match(token):
         return ResolvedPoint(label=token, lat=None, lon=None, source="airway")
 
+    # Skip 1- and 2-letter tokens — they are almost always noise from import
+    # (single letters left over from airway splits like 'G 851', shorthand
+    # like 'AD'). The proximity filter would catch most of them anyway, but
+    # rejecting them up front avoids polluting the trace.
+    if len(token) < 3:
+        return ResolvedPoint(label=token, lat=None, lon=None, source="unknown", missing=True)
+
     ap = db.find_airport(token)
     if ap:
         return ResolvedPoint(
@@ -133,14 +152,34 @@ def _resolve_token(token: str, region_hint: str | None = None) -> ResolvedPoint:
             country_iso=ap["country_iso"],
         )
 
-    wp = db.find_waypoint(token, region_hint)
-    if wp:
-        return ResolvedPoint(
-            label=token, lat=wp["lat"], lon=wp["lon"], source="waypoint",
-            country_iso=wp["region"] or None,
-        )
+    candidates = db.find_waypoints_all(token)
+    if not candidates:
+        return ResolvedPoint(label=token, lat=None, lon=None, source="unknown", missing=True)
 
-    return ResolvedPoint(label=token, lat=None, lon=None, source="unknown", missing=True)
+    # Prefer region hint if it picks a unique match.
+    if region_hint:
+        regional = [c for c in candidates if c["region"] == region_hint]
+        if regional:
+            candidates = regional
+
+    if near_pt is not None:
+        # Pick the candidate closest to the previous point, within max_nm_from_near.
+        scored = sorted(candidates, key=lambda c: _great_circle_nm(near_pt, (c["lat"], c["lon"])))
+        best = scored[0]
+        d = _great_circle_nm(near_pt, (best["lat"], best["lon"]))
+        if d <= max_nm_from_near:
+            return ResolvedPoint(
+                label=token, lat=best["lat"], lon=best["lon"], source="waypoint",
+                country_iso=best["region"] or None,
+            )
+        return ResolvedPoint(label=token, lat=None, lon=None, source="unknown", missing=True)
+
+    # No proximity hint yet — fall back to first user-added (else first by region).
+    best = candidates[0]
+    return ResolvedPoint(
+        label=token, lat=best["lat"], lon=best["lon"], source="waypoint",
+        country_iso=best["region"] or None,
+    )
 
 
 def tokenize_route(route_text: str) -> list[str]:
@@ -180,13 +219,28 @@ def resolve_route(
     region_hint: str | None = None,
 ) -> list[ResolvedPoint]:
     points: list[ResolvedPoint] = []
-    points.append(_resolve_token(origin_icao, region_hint))
+    origin_pt = _resolve_token(origin_icao, region_hint)
+    points.append(origin_pt)
+
+    # Resolve destination first (without proximity) to bracket the corridor.
+    dest_pt = _resolve_token(destination_icao, region_hint)
+
+    # near_pt = the last geo-located point we know. Start with origin.
+    last_geo: tuple[float, float] | None = (
+        (origin_pt.lat, origin_pt.lon)
+        if origin_pt.lat is not None and origin_pt.lon is not None
+        else None
+    )
+
     for tok in tokenize_route(route_text):
-        rp = _resolve_token(tok, region_hint)
+        rp = _resolve_token(tok, region_hint, near_pt=last_geo)
         if rp.source == "airway":
             continue
         points.append(rp)
-    points.append(_resolve_token(destination_icao, region_hint))
+        if rp.lat is not None and rp.lon is not None:
+            last_geo = (rp.lat, rp.lon)
+
+    points.append(dest_pt)
     out: list[ResolvedPoint] = []
     for p in points:
         if out and out[-1].label == p.label and out[-1].source == p.source:

@@ -246,6 +246,14 @@ def find_waypoint(ident: str, region_hint: str | None = None) -> sqlite3.Row | N
         ).fetchone()
 
 
+def find_waypoints_all(ident: str) -> list[sqlite3.Row]:
+    """Return every waypoint matching `ident` (any region)."""
+    with connect() as c:
+        return c.execute(
+            "SELECT * FROM waypoint WHERE ident = ? ORDER BY user_added DESC", (ident.strip().upper(),)
+        ).fetchall()
+
+
 def list_countries() -> list[sqlite3.Row]:
     with connect() as c:
         return c.execute("SELECT iso_a2, iso_a3, name_en, name_fr, geom_geojson FROM country").fetchall()
