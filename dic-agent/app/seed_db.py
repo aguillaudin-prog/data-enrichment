@@ -24,9 +24,12 @@ SEEDS_DIR.mkdir(parents=True, exist_ok=True)
 
 OURAIRPORTS_AIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 OURAIRPORTS_NAVAIDS_URL = "https://davidmegginson.github.io/ourairports-data/navaids.csv"
-NATURAL_EARTH_COUNTRIES_URL = (
-    "https://naciscdn.org/naturalearth/50m/cultural/ne_50m_admin_0_countries.geojson"
-)
+NATURAL_EARTH_COUNTRIES_URLS = [
+    # Primary: official Natural Earth vector repo on GitHub.
+    "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson",
+    # Fallback: naciscdn (often 403 from corporate networks).
+    "https://naciscdn.org/naturalearth/50m/cultural/ne_50m_admin_0_countries.geojson",
+]
 
 
 def _download(url: str, dest: Path) -> Path:
@@ -34,10 +37,24 @@ def _download(url: str, dest: Path) -> Path:
         print(f"  cached {dest.name}")
         return dest
     print(f"  downloading {url} → {dest.name}")
-    r = requests.get(url, timeout=120)
+    r = requests.get(url, timeout=120, headers={"User-Agent": "dic-agent/1.0"})
     r.raise_for_status()
     dest.write_bytes(r.content)
     return dest
+
+
+def _download_first(urls: list[str], dest: Path) -> Path:
+    if dest.exists() and dest.stat().st_size > 0:
+        print(f"  cached {dest.name}")
+        return dest
+    last_err = None
+    for url in urls:
+        try:
+            return _download(url, dest)
+        except Exception as e:
+            print(f"  failed {url}: {e}")
+            last_err = e
+    raise RuntimeError(f"All sources failed for {dest.name}: {last_err}")
 
 
 def seed_airports() -> None:
@@ -141,7 +158,7 @@ def seed_aircraft_types() -> None:
 
 
 def seed_countries() -> None:
-    geo_path = _download(NATURAL_EARTH_COUNTRIES_URL, SEEDS_DIR / "ne_50m_admin_0_countries.geojson")
+    geo_path = _download_first(NATURAL_EARTH_COUNTRIES_URLS, SEEDS_DIR / "ne_50m_admin_0_countries.geojson")
     data = json.loads(geo_path.read_text(encoding="utf-8"))
     rows: list[dict] = []
     for feat in data.get("features", []):
