@@ -430,96 +430,115 @@ def _clear_leg_widget_state() -> None:
         del st.session_state[k]
 
 
+_NEW_MISSION_LABEL = "✨ Nouvelle mission"
+
+
+def _apply_template(tpl_name: str, filtered_templates: list) -> None:
+    """Wipe leg widget state and populate st.session_state.legs from a template."""
+    tpl = next((r for r in filtered_templates if r["name"] == tpl_name), None)
+    if tpl is None:
+        return
+    payload = json.loads(tpl["legs_json"])
+    legs_data = payload.get("legs") if isinstance(payload, dict) else payload
+    base_date = dt.date.today()
+    _clear_leg_widget_state()
+    st.session_state.legs = []
+    for li, leg_data in enumerate(legs_data or []):
+        hours_from_six = li * 2
+        if hours_from_six < 16:
+            eobt_day = base_date
+            eobt_hour = 6 + hours_from_six
+        else:
+            rollover = hours_from_six - 16
+            day_offset = 1 + rollover // 16
+            eobt_day = base_date + dt.timedelta(days=day_offset)
+            eobt_hour = 6 + (rollover % 16)
+        st.session_state.legs.append({
+            "origin": leg_data.get("origin") or "",
+            "destination": leg_data.get("destination") or "",
+            "fl": leg_data.get("fl") or 90,
+            "tas": leg_data.get("tas") or 140,
+            "date": eobt_day,
+            "eobt_time": dt.time(eobt_hour, 0),
+            "route_text": leg_data.get("route_text") or "",
+        })
+
+
+def _reset_to_blank_mission() -> None:
+    _clear_leg_widget_state()
+    st.session_state.legs = [
+        {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
+    ]
+    st.session_state.pop("_loaded_tpl_name", None)
+
+
 with tab_legs:
     tpl_rows = db.list_route_templates()
-    if tpl_rows:
-        # Group by category
-        by_cat: dict[str, list] = {}
-        for r in tpl_rows:
-            cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
-            by_cat.setdefault(cat, []).append(r)
-        cats = sorted(by_cat.keys())
+    by_cat: dict[str, list] = {}
+    for r in tpl_rows:
+        cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
+        by_cat.setdefault(cat, []).append(r)
+    cats = sorted(by_cat.keys())
 
-        def _on_dossier_change() -> None:
-            # When the Dossier filter changes, drop the previously chosen
-            # template so the second selectbox starts fresh.
-            st.session_state.pop("tpl_sel", None)
+    def _on_dossier_change() -> None:
+        # Switch dossier → reset the Mission picker to 'Nouvelle mission' so we
+        # don't end up with a ghost selection from another folder.
+        st.session_state["tpl_sel"] = _NEW_MISSION_LABEL
+        _reset_to_blank_mission()
 
+    def _on_mission_change() -> None:
+        # Auto-apply the picked template (or reset if 'Nouvelle mission').
+        chosen = st.session_state.get("tpl_sel", _NEW_MISSION_LABEL)
+        if chosen == _NEW_MISSION_LABEL:
+            _reset_to_blank_mission()
+        else:
+            cat_sel = st.session_state.get("tpl_cat", "— tous —")
+            filtered = tpl_rows if cat_sel == "— tous —" else by_cat.get(cat_sel, [])
+            _apply_template(chosen, filtered)
+            st.session_state["_loaded_tpl_name"] = chosen
+
+    pc1, pc2 = st.columns([1, 3])
+    with pc1:
         cat_sel = st.selectbox(
             "Dossier", ["— tous —"] + cats, key="tpl_cat",
             on_change=_on_dossier_change,
+            disabled=not cats,
         )
+    with pc2:
         filtered = tpl_rows if cat_sel == "— tous —" else by_cat.get(cat_sel, [])
-        tpl_options = ["— pas de template —"] + [r["name"] for r in filtered]
+        tpl_options = [_NEW_MISSION_LABEL] + [r["name"] for r in filtered]
         sel_tpl = st.selectbox(
-            "Recharger une mission depuis la bibliothèque", tpl_options, key="tpl_sel",
-            help="Routes validées importées depuis tes DIC passées (python -m app.seed_profiles)",
+            "Mission",
+            tpl_options,
+            key="tpl_sel",
+            on_change=_on_mission_change,
+            help="Choisis une mission existante pour pré-remplir les legs, ou « Nouvelle mission » pour repartir vierge.",
         )
-        if sel_tpl != "— pas de template —":
-            if st.button(f"📥 Charger '{sel_tpl}'", key="tpl_load"):
-                tpl = next(r for r in filtered if r["name"] == sel_tpl)
-                payload = json.loads(tpl["legs_json"])
-                # Templates may be stored either as {legs: [...]} or as a bare list of legs.
-                legs_data = payload.get("legs") if isinstance(payload, dict) else payload
-                base_date = dt.date.today()
-                _clear_leg_widget_state()
-                st.session_state.legs = []
-                for li, leg_data in enumerate(legs_data or []):
-                    # Spread EOBT every 2h starting from 06:00 UTC. Roll over
-                    # to next day(s) once we pass 22:00 to handle multi-leg
-                    # missions cleanly (e.g. 6 legs around the clock).
-                    hours_from_six = li * 2
-                    if hours_from_six < 16:  # 06:00 → 22:00 same day
-                        eobt_day = base_date
-                        eobt_hour = 6 + hours_from_six
-                    else:
-                        rollover = hours_from_six - 16  # hours past 22:00 of day 0
-                        day_offset = 1 + rollover // 16
-                        eobt_day = base_date + dt.timedelta(days=day_offset)
-                        eobt_hour = 6 + (rollover % 16)
-                    st.session_state.legs.append({
-                        "origin": leg_data.get("origin") or "",
-                        "destination": leg_data.get("destination") or "",
-                        "fl": leg_data.get("fl") or 90,
-                        "tas": leg_data.get("tas") or 140,
-                        "date": eobt_day,
-                        "eobt_time": dt.time(eobt_hour, 0),
-                        "route_text": leg_data.get("route_text") or "",
-                    })
-                st.session_state["_loaded_tpl_name"] = sel_tpl
-                st.success(f"{len(legs_data or [])} legs chargés depuis '{sel_tpl}'. Édite et regénère.")
-                st.rerun()
 
-    if st.session_state.get("_loaded_tpl_name"):
+    if st.session_state.get("_loaded_tpl_name") and sel_tpl == st.session_state.get("_loaded_tpl_name"):
         st.caption(f"🗂️ Mission active : **{st.session_state['_loaded_tpl_name']}**")
 
-    bc1, bc2, bc3 = st.columns([1, 1, 1])
-    with bc1:
-        if st.button("➕ Ajouter un leg"):
+    for i, leg in enumerate(st.session_state.legs):
+        st.session_state.legs[i] = _leg_editor(i, leg)
+
+    # Inline +/− leg controls at the bottom — concise, no header noise.
+    lc1, lc2, _ = st.columns([1, 1, 4])
+    with lc1:
+        if st.button("➕ Leg", help="Ajouter un leg"):
             new_idx = len(st.session_state.legs)
-            # Wipe any stale widget state at the upcoming index.
             for suffix in ("orig", "dest", "fl", "tas", "date", "eobt", "route", "suggested"):
                 st.session_state.pop(f"leg_{new_idx}_{suffix}", None)
             st.session_state.legs.append(
                 {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
             )
-    with bc2:
-        if len(st.session_state.legs) > 1 and st.button("➖ Retirer le dernier leg"):
+            st.rerun()
+    with lc2:
+        if len(st.session_state.legs) > 1 and st.button("➖ Leg", help="Retirer le dernier leg"):
             last_idx = len(st.session_state.legs) - 1
             for suffix in ("orig", "dest", "fl", "tas", "date", "eobt", "route", "suggested"):
                 st.session_state.pop(f"leg_{last_idx}_{suffix}", None)
             st.session_state.legs.pop()
-    with bc3:
-        if st.button("🧹 Vider tous les legs", help="Repart d'une mission vierge sans charger de template"):
-            _clear_leg_widget_state()
-            st.session_state.legs = [
-                {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
-            ]
-            st.session_state.pop("_loaded_tpl_name", None)
             st.rerun()
-    for i, leg in enumerate(st.session_state.legs):
-        st.session_state.legs[i] = _leg_editor(i, leg)
-        st.divider()
 
 
 with tab_preview:
