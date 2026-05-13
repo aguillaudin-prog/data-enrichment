@@ -1,13 +1,16 @@
 """Seed default profiles (aircraft, POC) and Benin route templates.
 
-This wraps seed_pilots + adds the default Amazone profile and bulk-loads the
-Benin route templates extracted from past DICs (sanitised — operational route
-data only, no personal info).
+This wraps seed_pilots + adds the default Amazone profile, the West Africa
+IFR fixes used by the bundled DIC templates (POLTO, KELIG, etc. — these are
+RNAV named fixes that OurAirports' navaid file doesn't carry), and bulk-loads
+the Benin route templates extracted from past DICs (sanitised — operational
+route data only, no personal info).
 
 Run: python -m app.seed_profiles
 """
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -57,6 +60,32 @@ def seed_pocs() -> None:
     print(f"Seeded {len(DEFAULT_POCS)} POC profiles.")
 
 
+def seed_extra_waypoints() -> None:
+    """Add the IFR named fixes used by the bundled DIC templates.
+
+    These are 5-letter RNAV fixes (POLTO, KELIG, MESES, etc.) that don't
+    appear in OurAirports' navaid feed. Marked user_added so the proximity
+    resolver prefers them when ambiguous.
+    """
+    csv_path = SEEDS_DIR / "minimal_waypoints.csv"
+    if not csv_path.exists():
+        print("  minimal_waypoints.csv missing — skipped")
+        return
+    rows: list[dict] = []
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            rows.append({
+                "ident": r["ident"].strip().upper(),
+                "region": r["region"].strip().upper(),
+                "lat": float(r["lat"]),
+                "lon": float(r["lon"]),
+                "kind": r.get("kind") or None,
+                "user_added": 1,
+            })
+    n = db.upsert_waypoints(rows)
+    print(f"Seeded {n} West Africa fixes (POLTO, KELIG, MESES, …).")
+
+
 def seed_route_templates() -> None:
     """Load every seeds/route_templates_*.json into the route_template table."""
     files = sorted(SEEDS_DIR.glob("route_templates_*.json"))
@@ -88,6 +117,7 @@ def main() -> int:
     seed_pilots.main()
     seed_aircraft()
     seed_pocs()
+    seed_extra_waypoints()
     seed_route_templates()
     print("\nAll profile seeds done.")
     return 0

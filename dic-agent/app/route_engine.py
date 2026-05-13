@@ -225,7 +225,17 @@ def resolve_route(
     # Resolve destination first (without proximity) to bracket the corridor.
     dest_pt = _resolve_token(destination_icao, region_hint)
 
-    # near_pt = the last geo-located point we know. Start with origin.
+    # Distance-aware proximity threshold. For a 200-NM leg a candidate waypoint
+    # must be within ~300 NM of the previous point. For a 2000-NM leg we allow
+    # up to ~2600 NM. Eliminates the 'TYE matches a point in Portugal' bug.
+    if origin_pt.lat is not None and dest_pt.lat is not None:
+        leg_nm = _great_circle_nm(
+            (origin_pt.lat, origin_pt.lon), (dest_pt.lat, dest_pt.lon)
+        )
+        max_nm = max(300.0, leg_nm * 1.3)
+    else:
+        max_nm = 800.0
+
     last_geo: tuple[float, float] | None = (
         (origin_pt.lat, origin_pt.lon)
         if origin_pt.lat is not None and origin_pt.lon is not None
@@ -233,7 +243,7 @@ def resolve_route(
     )
 
     for tok in tokenize_route(route_text):
-        rp = _resolve_token(tok, region_hint, near_pt=last_geo)
+        rp = _resolve_token(tok, region_hint, near_pt=last_geo, max_nm_from_near=max_nm)
         if rp.source == "airway":
             continue
         points.append(rp)
