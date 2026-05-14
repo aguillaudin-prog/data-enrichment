@@ -448,8 +448,30 @@ def _missing_point_form(label: str, key: str) -> None:
 st.title("🛩️ DIC Agent — Diplomatic Clearance generator")
 st.caption("FRA / ICAO — application locale. Données : OurAirports + Natural Earth.")
 
+if "legs" not in st.session_state:
+    st.session_state.legs = [
+        {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
+    ]
+
+# Sidebar navigation — sticky on scroll so the user never loses track of the
+# current step. The 3 sections used to live in st.tabs() but tabs scroll out
+# of view on long forms.
+PAGES = ["1️⃣ Mission & profils", "2️⃣ Legs", "3️⃣ Preview & export"]
 with st.sidebar:
-    st.header("Paramètres")
+    st.header("DIC Agent")
+    _mission_done = bool((st.session_state.get("mission") or {}).get("registration"))
+    _legs_done = any(
+        leg.get("origin") and leg.get("destination") and leg.get("route_text")
+        for leg in st.session_state.legs
+    )
+    st.markdown(
+        f"- {'✅' if _mission_done else '⬜'} Mission renseignée\n"
+        f"- {'✅' if _legs_done else '⬜'} Au moins un leg complet"
+    )
+    st.divider()
+    page = st.radio("Étape", PAGES, label_visibility="collapsed")
+    st.divider()
+    st.subheader("Paramètres globaux")
     template_format = st.radio("Format DIC", ["FRA", "ICAO"], horizontal=True)
     st.divider()
     st.caption(
@@ -457,16 +479,7 @@ with st.sidebar:
         "`N 9°34'45.56\" / E 3°14'7.09\"` ou `N9 34 45 / E3 14 7`."
     )
 
-tab_mission, tab_legs, tab_preview = st.tabs(
-    ["1️⃣ Mission & profils", "2️⃣ Legs", "3️⃣ Preview & export"]
-)
-
-if "legs" not in st.session_state:
-    st.session_state.legs = [
-        {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
-    ]
-
-with tab_mission:
+if page == PAGES[0]:
     c1, c2, c3 = st.columns(3)
     with c1:
         reference = st.text_input("Reference number", value="MSG DU " + dt.date.today().strftime("%d/%m/%Y"))
@@ -599,7 +612,7 @@ def _reset_to_blank_mission() -> None:
     st.session_state.pop("_loaded_tpl_name", None)
 
 
-with tab_legs:
+if page == PAGES[1]:
     tpl_rows = db.list_route_templates()
     by_cat: dict[str, list] = {}
     for r in tpl_rows:
@@ -679,7 +692,7 @@ with tab_legs:
             st.rerun()
 
 
-with tab_preview:
+if page == PAGES[2]:
     if not st.session_state.legs or not any(l.get("origin") for l in st.session_state.legs):
         st.info("Saisis au moins un leg avec une origine.")
         st.stop()
