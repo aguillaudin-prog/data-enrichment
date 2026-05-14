@@ -27,6 +27,37 @@ DEFAULT_AIRCRAFT = [
     },
 ]
 
+# Performance figures taken from public POH/AFM data, rounded conservatively
+# (takeoff distance over 50 ft at MTOW / ISA / sea level for min_runway_ft,
+# approach cat from ICAO Doc 8168 based on Vat). These power the route
+# suggester's SID/STAR runway filter and the FL-vs-ceiling warning.
+AIRCRAFT_TYPE_PERF = [
+    {
+        "icao_designator": "DHC6",
+        "full_name": "De Havilland Canada DHC-6 Twin Otter",
+        "manufacturer": "De Havilland Canada / Viking Air",
+        "cruise_tas_kt": 150,
+        "service_ceiling_ft": 25000,
+        "range_nm": 700,
+        "wake_category": "L",
+        "min_runway_ft": 1500,
+        "approach_cat": "A",
+        "climb_gradient_pct": 8.5,
+    },
+    {
+        "icao_designator": "DA62",
+        "full_name": "Diamond DA62",
+        "manufacturer": "Diamond Aircraft",
+        "cruise_tas_kt": 192,
+        "service_ceiling_ft": 20000,
+        "range_nm": 1300,
+        "wake_category": "L",
+        "min_runway_ft": 2400,
+        "approach_cat": "A",
+        "climb_gradient_pct": 8.0,
+    },
+]
+
 DEFAULT_POCS = [
     {
         "rank": "OF1",
@@ -48,6 +79,11 @@ def seed_aircraft() -> None:
             operator=a["operator"],
         )
     print(f"Seeded {len(DEFAULT_AIRCRAFT)} aircraft profiles.")
+
+
+def seed_aircraft_type_perf() -> None:
+    n = db.upsert_aircraft_types(AIRCRAFT_TYPE_PERF)
+    print(f"Seeded perf data for {n} aircraft types.")
 
 
 def seed_pocs() -> None:
@@ -151,6 +187,7 @@ def reclassify_divers() -> None:
 def main() -> int:
     db.init_schema()
     seed_pilots.main()
+    seed_aircraft_type_perf()
     seed_aircraft()
     seed_pocs()
     seed_extra_waypoints()

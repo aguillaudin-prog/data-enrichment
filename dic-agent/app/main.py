@@ -252,6 +252,17 @@ def _leg_editor(idx: int, leg: dict) -> dict:
     with c4:
         tas = st.number_input("TAS (kt)", min_value=50, max_value=900, value=int(leg.get("tas", 140)), step=10, key=f"{kprefix}_tas")
 
+    ac_type = (st.session_state.get("mission") or {}).get("aircraft_type_icao") or ""
+    ac_perf = db.find_aircraft_type(ac_type) if ac_type else None
+    if ac_perf and ac_perf["service_ceiling_ft"]:
+        ceiling_fl = int(ac_perf["service_ceiling_ft"]) // 100
+        if int(fl) > ceiling_fl:
+            st.error(
+                f"⚠️ FL{int(fl):03d} dépasse le plafond service {ac_type} "
+                f"({ac_perf['service_ceiling_ft']} ft = FL{ceiling_fl:03d}). "
+                f"Réduis le FL ou change d'appareil."
+            )
+
     c5, c6 = st.columns(2)
     with c5:
         d = st.date_input("Date (UTC)", value=leg.get("date", dt.date.today()), key=f"{kprefix}_date")
@@ -282,8 +293,9 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                     enroute_tokens = [t for t in enroute.split() if t and t != "DCT"]
                     first_fix = enroute_tokens[0] if enroute_tokens else None
                     last_fix = enroute_tokens[-1] if enroute_tokens else None
-                    sid_pick = route_suggester.pick_procedure(origin, first_fix, "SID")
-                    star_pick = route_suggester.pick_procedure(destination, last_fix, "STAR")
+                    min_rwy = int(ac_perf["min_runway_ft"]) if (ac_perf and ac_perf["min_runway_ft"]) else None
+                    sid_pick = route_suggester.pick_procedure(origin, first_fix, "SID", min_runway_ft=min_rwy)
+                    star_pick = route_suggester.pick_procedure(destination, last_fix, "STAR", min_runway_ft=min_rwy)
                     full_route = enroute
                     extras: list[str] = []
                     if sid_pick:
@@ -466,6 +478,7 @@ with tab_mission:
         "template_format": template_format,
         "requesting_state": "FRANCE",
         "operator": ap.get("operator", ""),
+        "aircraft_type_icao": (ap.get("type_icao") or "").strip().upper(),
         "aircraft_count_type": f"1  {ap.get('type_icao','')}",
         "registration": ap.get("registration", ""),
         "spare_aircraft": f"{ap.get('registration','')} OR SUBSTITUTE",

@@ -24,6 +24,7 @@ SEEDS_DIR.mkdir(parents=True, exist_ok=True)
 
 OURAIRPORTS_AIRPORTS_URL = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 OURAIRPORTS_NAVAIDS_URL = "https://davidmegginson.github.io/ourairports-data/navaids.csv"
+OURAIRPORTS_RUNWAYS_URL = "https://davidmegginson.github.io/ourairports-data/runways.csv"
 NATURAL_EARTH_COUNTRIES_URLS = [
     # Primary: official Natural Earth vector repo on GitHub.
     "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson",
@@ -124,6 +125,43 @@ def seed_waypoints() -> None:
     print(f"  waypoints: {n}")
 
 
+def seed_runways() -> None:
+    """Import runway lengths from OurAirports.
+
+    Each row in runways.csv describes one runway with two ends (le_ident,
+    he_ident). length_ft applies to both. We insert one row per end so the
+    `runways_csv` field of CIFP procedures (which references specific ends
+    like '06L') can be matched by identifier.
+    """
+    csv_path = _download(OURAIRPORTS_RUNWAYS_URL, SEEDS_DIR / "runways.csv")
+    rows: list[dict] = []
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            icao = (r.get("airport_ident") or "").strip().upper()
+            if not icao:
+                continue
+            try:
+                length = int(float(r["length_ft"])) if r.get("length_ft") else None
+            except (KeyError, ValueError):
+                length = None
+            surface = (r.get("surface") or "").strip().upper() or None
+            closed = 1 if (r.get("closed") or "0").strip() in ("1", "yes", "true") else 0
+            for end_key in ("le_ident", "he_ident"):
+                ident = (r.get(end_key) or "").strip().upper()
+                if not ident:
+                    continue
+                rows.append({
+                    "airport_icao": icao,
+                    "ident": ident,
+                    "length_ft": length,
+                    "surface": surface,
+                    "closed": closed,
+                })
+    n = db.upsert_runways(rows)
+    print(f"  runways: {n}")
+
+
 def seed_aircraft_types() -> None:
     csv_path = SEEDS_DIR / "aircraft_types.csv"
     if not csv_path.exists():
@@ -191,6 +229,8 @@ def main() -> int:
     seed_airports()
     print("→ Waypoints…")
     seed_waypoints()
+    print("→ Runways…")
+    seed_runways()
     print("→ Countries…")
     seed_countries()
     print("Done.")

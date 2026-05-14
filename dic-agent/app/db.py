@@ -131,6 +131,17 @@ CREATE TABLE IF NOT EXISTS procedure (
 CREATE INDEX IF NOT EXISTS idx_proc_airport_type ON procedure(airport_icao, proc_type);
 CREATE INDEX IF NOT EXISTS idx_proc_name ON procedure(proc_name);
 
+CREATE TABLE IF NOT EXISTS runway (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    airport_icao TEXT NOT NULL,
+    ident TEXT NOT NULL,
+    length_ft INTEGER,
+    surface TEXT,
+    closed INTEGER DEFAULT 0,
+    UNIQUE (airport_icao, ident)
+);
+CREATE INDEX IF NOT EXISTS idx_runway_airport ON runway(airport_icao);
+
 CREATE TABLE IF NOT EXISTS airway_segment (
     from_ident TEXT NOT NULL,
     from_region TEXT,
@@ -175,7 +186,15 @@ def _migrate(conn) -> None:
     tpl_cols = {row[1] for row in cur.fetchall()}
     if tpl_cols and "category" not in tpl_cols:
         conn.execute("ALTER TABLE route_template ADD COLUMN category TEXT")
-    # `procedure` table is created by SCHEMA on init; no column migration yet.
+    cur = conn.execute("PRAGMA table_info(aircraft_type)")
+    ac_cols = {row[1] for row in cur.fetchall()}
+    if ac_cols:
+        if "min_runway_ft" not in ac_cols:
+            conn.execute("ALTER TABLE aircraft_type ADD COLUMN min_runway_ft INTEGER")
+        if "approach_cat" not in ac_cols:
+            conn.execute("ALTER TABLE aircraft_type ADD COLUMN approach_cat TEXT")
+        if "climb_gradient_pct" not in ac_cols:
+            conn.execute("ALTER TABLE aircraft_type ADD COLUMN climb_gradient_pct REAL")
 
 
 def init_schema() -> None:
@@ -218,12 +237,48 @@ def upsert_waypoints(rows: Iterable[dict]) -> int:
 
 def upsert_aircraft_types(rows: Iterable[dict]) -> int:
     sql = """
-    INSERT INTO aircraft_type (icao_designator, full_name, manufacturer, cruise_tas_kt, service_ceiling_ft, range_nm, wake_category)
-    VALUES (:icao_designator, :full_name, :manufacturer, :cruise_tas_kt, :service_ceiling_ft, :range_nm, :wake_category)
+    INSERT INTO aircraft_type (icao_designator, full_name, manufacturer, cruise_tas_kt,
+        service_ceiling_ft, range_nm, wake_category,
+        min_runway_ft, approach_cat, climb_gradient_pct)
+    VALUES (:icao_designator, :full_name, :manufacturer, :cruise_tas_kt,
+        :service_ceiling_ft, :range_nm, :wake_category,
+        :min_runway_ft, :approach_cat, :climb_gradient_pct)
     ON CONFLICT(icao_designator) DO UPDATE SET
         full_name=excluded.full_name, manufacturer=excluded.manufacturer,
         cruise_tas_kt=excluded.cruise_tas_kt, service_ceiling_ft=excluded.service_ceiling_ft,
-        range_nm=excluded.range_nm, wake_category=excluded.wake_category
+        range_nm=excluded.range_nm, wake_category=excluded.wake_category,
+        min_runway_ft=COALESCE(excluded.min_runway_ft, aircraft_type.min_runway_ft),
+        approach_cat=COALESCE(excluded.approach_cat, aircraft_type.approach_cat),
+        climb_gradient_pct=COALESCE(excluded.climb_gradient_pct, aircraft_type.climb_gradient_pct)
+    """
+    n = 0
+    with connect() as c:
+        for r in rows:
+            row = {
+                "min_runway_ft": None, "approach_cat": None, "climb_gradient_pct": None,
+                **r,
+            }
+            c.execute(sql, row)
+            n += 1
+    return n
+
+
+def find_aircraft_type(icao_designator: str) -> sqlite3.Row | None:
+    if not icao_designator:
+        return None
+    with connect() as c:
+        return c.execute(
+            "SELECT * FROM aircraft_type WHERE icao_designator = ?",
+            (icao_designator.strip().upper(),),
+        ).fetchone()
+
+
+def upsert_runways(rows: Iterable[dict]) -> int:
+    sql = """
+    INSERT INTO runway (airport_icao, ident, length_ft, surface, closed)
+    VALUES (:airport_icao, :ident, :length_ft, :surface, :closed)
+    ON CONFLICT(airport_icao, ident) DO UPDATE SET
+        length_ft=excluded.length_ft, surface=excluded.surface, closed=excluded.closed
     """
     n = 0
     with connect() as c:
@@ -231,6 +286,32 @@ def upsert_aircraft_types(rows: Iterable[dict]) -> int:
             c.execute(sql, r)
             n += 1
     return n
+
+
+def list_airport_runways(icao: str) -> list[sqlite3.Row]:
+    with connect() as c:
+        return c.execute(
+            "SELECT * FROM runway WHERE airport_icao = ? AND closed = 0 "
+            "ORDER BY length_ft DESC NULLS LAST",
+            (icao.strip().upper(),),
+        ).fetchall()
+
+
+def runway_length_ft(icao: str, ident: str) -> int | None:
+    """Length of a specific runway end (e.g. '06L'). Returns None if unknown."""
+    if not icao or not ident:
+        return None
+    with connect() as c:
+        row = c.execute(
+            "SELECT length_ft FROM runway WHERE airport_icao = ? AND ident = ?",
+            (icao.strip().upper(), ident.strip().upper()),
+        ).fetchone()
+        return row["length_ft"] if row and row["length_ft"] is not None else None
+
+
+def count_runways() -> int:
+    with connect() as c:
+        return c.execute("SELECT COUNT(*) FROM runway").fetchone()[0]
 
 
 def upsert_countries(rows: Iterable[dict]) -> int:
