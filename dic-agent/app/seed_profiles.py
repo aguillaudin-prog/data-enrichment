@@ -25,6 +25,18 @@ DEFAULT_AIRCRAFT = [
         "callsign": "TY-BAB",
         "operator": "AMAZONE AIRLINES / DYNAMI AVIATION OPS",
     },
+    {
+        "registration": "F-HJTA",
+        "type_icao": "DA62",
+        "callsign": "F-HJTA",
+        "operator": "REVOLUTION'AIR",
+    },
+    {
+        "registration": "7Q-YAE",
+        "type_icao": "L410",
+        "callsign": "7Q-YAE",
+        "operator": "ZEBU AIR",
+    },
 ]
 
 # Performance figures taken from public POH/AFM data, rounded conservatively
