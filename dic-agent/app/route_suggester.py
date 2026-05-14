@@ -399,6 +399,84 @@ def suggest_route(
     )
 
 
+def _collect_procedure_endpoints(
+    airport_icao: str, proc_type: str, min_runway_ft: int | None,
+) -> dict[str, dict]:
+    """For an airport, return {endpoint_fix: {lat, lon, procs}} — the unique
+    SID exits (or STAR entries) with their geographic coords. Procedures
+    incompatible with the aircraft's minimum runway are filtered out.
+    """
+    endpoints: dict[str, dict] = {}
+    for p in db.list_procedures(airport_icao, proc_type):
+        ok_rwys, _ = _runways_compatible(airport_icao, p["runways_csv"], min_runway_ft)
+        if min_runway_ft and p["runways_csv"] and not ok_rwys:
+            continue
+        try:
+            wpts = json.loads(p["waypoints_json"])
+        except Exception:
+            continue
+        if not wpts:
+            continue
+        endpoint = (wpts[-1] if proc_type == "SID" else wpts[0]).upper()
+        if endpoint in endpoints:
+            endpoints[endpoint]["procs"].append(p)
+            continue
+        wp = db.find_waypoint(endpoint)
+        if not wp:
+            continue
+        endpoints[endpoint] = {"lat": wp["lat"], "lon": wp["lon"], "procs": [p]}
+    return endpoints
+
+
+def _direction_aligned(
+    from_pt: tuple[float, float], to_pt: tuple[float, float],
+    target_bearing: float, tolerance_deg: float = 110.0,
+) -> bool:
+    """Whether the bearing from_pt → to_pt is within tolerance of the
+    overall origin-destination bearing. Filters out SID/STAR endpoints
+    that would send the route backwards."""
+    b = _bearing(from_pt, to_pt)
+    diff = ((b - target_bearing + 540.0) % 360.0) - 180.0
+    return abs(diff) <= tolerance_deg
+
+
+def _pick_proc_for_endpoint(
+    airport_icao: str, endpoint_fix: str, proc_type: str,
+    min_runway_ft: int | None,
+) -> dict | None:
+    """Given an endpoint fix already chosen by the enumeration, pick the
+    specific procedure (preferring broader runway coverage). Returns the
+    procedure dict augmented with `waypoints`, `connecting_fix`, and the
+    expanded canonical name.
+    """
+    endpoint_u = endpoint_fix.upper()
+    candidates: list[tuple[float, dict, list[str]]] = []
+    for p in db.list_procedures(airport_icao, proc_type):
+        ok_rwys, _ = _runways_compatible(airport_icao, p["runways_csv"], min_runway_ft)
+        if min_runway_ft and p["runways_csv"] and not ok_rwys:
+            continue
+        try:
+            wpts = json.loads(p["waypoints_json"])
+        except Exception:
+            continue
+        if not wpts:
+            continue
+        end = (wpts[-1] if proc_type == "SID" else wpts[0]).upper()
+        if end != endpoint_u:
+            continue
+        candidates.append((len(ok_rwys) * 0.5, dict(p), ok_rwys))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: -x[0])
+    _, best, ok_rwys = candidates[0]
+    if ok_rwys:
+        best["runways_csv"] = ",".join(ok_rwys)
+    best["waypoints"] = json.loads(best["waypoints_json"])
+    best["connecting_fix"] = endpoint_fix
+    best["proc_name"] = _expand_truncated_proc_name(best["proc_name"], best["waypoints"])
+    return best
+
+
 def suggest_with_procedures(
     origin_icao: str,
     destination_icao: str,
@@ -407,73 +485,112 @@ def suggest_with_procedures(
     corridor_nm: float = 100.0,
     k_neighbours: int = 8,
     airspace_penalties: list[dict] | None = None,
+    max_pairs: int = 9,
 ) -> tuple[SuggestedRoute, dict | None, dict | None]:
-    """Full IFR route with auto-picked SID/STAR that chain correctly.
+    """Full IFR route — enumerates plausible (SID exit, STAR entry) pairs
+    and picks the combination whose A* gives the shortest total path.
 
-    The naive approach (run A* airport-to-airport, then auto-pick SIDs/STARs
-    that *contain* the first/last enroute fix) produces routes like
-    ``MAMES6N DIVKO …`` where RocketRoute rejects the SID/transition combo:
-    MAMES6N's published exit is MAMES, not DIVKO.
+    Earlier versions ran a single airport-to-airport A*, then greedily
+    matched a SID/STAR to whatever fix the A* happened to end near. That
+    locked us into routes the commercial validator might not even have
+    in its preferred-routings DB, because the A* end-fix was determined
+    by the airway graph topology, not by published terminal connections.
 
-    This function does it correctly:
+    Now we:
 
-      1. Run airport-to-airport A* to get an approximate enroute direction
-         and identify the first/last natural enroute fix.
-      2. Pick the best SID at origin and STAR at destination.
-      3. **Re-run A* from SID exit fix to STAR entry fix** (or to airport
-         if no SID/STAR was picked). This produces an enroute that joins
-         the SID's published exit and the STAR's published entry, which is
-         the format RocketRoute / IFPS expect.
+      1. Enumerate every SID exit at origin and STAR entry at destination
+         (those that suit the aircraft's runway).
+      2. Filter by direction: an endpoint is kept only if going through
+         it doesn't reverse the great-circle bearing toward the
+         destination (110° tolerance — generous).
+      3. Take the top-3 SID exits closest to origin and the top-3 STAR
+         entries closest to destination → up to 9 pairs.
+      4. Run A* between every pair (each from SID exit to STAR entry).
+      5. Compare on total distance = enroute + origin-to-SID-exit +
+         STAR-entry-to-destination. Keep the shortest.
+      6. Pick the specific SID/STAR procedure for the winning endpoints.
 
-    Returns (SuggestedRoute, sid_dict|None, star_dict|None). The
-    SuggestedRoute's route_text now drops the SID exit and STAR entry
-    fixes (implicit from the SID/STAR names), so callers should assemble
-    the final FPL route as ``<SID_name> <route_text> <STAR_name>``.
+    Special cases: 'no SID' and 'no STAR' are always evaluated as
+    options too — for airports without procedures in CIFP, the algorithm
+    naturally falls back to airport-to-airport routing.
     """
-    sug = suggest_route(
-        origin_icao, destination_icao, corridor_nm=corridor_nm,
-        k_neighbours=k_neighbours, airspace_penalties=airspace_penalties, fl=fl,
-    )
-    if not sug.waypoints or sug.distance_nm == 0:
-        return sug, None, None
-
-    enroute_tokens = [t for t in sug.route_text.split() if t and t != "DCT"]
-    first_fix = enroute_tokens[0] if enroute_tokens else None
-    last_fix = enroute_tokens[-1] if enroute_tokens else None
-    sid = pick_procedure(origin_icao, first_fix, "SID", min_runway_ft=min_runway_ft)
-    star = pick_procedure(destination_icao, last_fix, "STAR", min_runway_ft=min_runway_ft)
-
     o = _airport_point(origin_icao)
     d = _airport_point(destination_icao)
-    new_o_label = origin_icao
-    new_o_pt = (o[1], o[2])
-    new_d_label = destination_icao
-    new_d_pt = (d[1], d[2])
-
-    rerouted = False
-    if sid:
-        wp = db.find_waypoint(sid["connecting_fix"])
-        if wp:
-            new_o_label = sid["connecting_fix"]
-            new_o_pt = (wp["lat"], wp["lon"])
-            rerouted = True
-    if star:
-        wp = db.find_waypoint(star["connecting_fix"])
-        if wp:
-            new_d_label = star["connecting_fix"]
-            new_d_pt = (wp["lat"], wp["lon"])
-            rerouted = True
-
-    if rerouted:
-        sug2 = _suggest_between_labeled_points(
-            new_o_label, new_o_pt, new_d_label, new_d_pt,
-            corridor_nm=corridor_nm, k_neighbours=k_neighbours,
-            airspace_penalties=airspace_penalties, fl=fl,
+    if not o or not d:
+        sug = suggest_route(
+            origin_icao, destination_icao, corridor_nm=corridor_nm,
+            k_neighbours=k_neighbours, airspace_penalties=airspace_penalties, fl=fl,
         )
-        if sug2.waypoints and sug2.distance_nm > 0:
-            sug = sug2
+        return sug, None, None
+    o_pt = (o[1], o[2])
+    d_pt = (d[1], d[2])
+    bearing_od = _bearing(o_pt, d_pt)
 
-    return sug, sid, star
+    sid_exits = _collect_procedure_endpoints(origin_icao, "SID", min_runway_ft)
+    star_entries = _collect_procedure_endpoints(destination_icao, "STAR", min_runway_ft)
+
+    sid_aligned = {
+        e: data for e, data in sid_exits.items()
+        if _direction_aligned(o_pt, (data["lat"], data["lon"]), bearing_od)
+    }
+    star_aligned = {
+        e: data for e, data in star_entries.items()
+        if _direction_aligned((data["lat"], data["lon"]), d_pt, bearing_od)
+    }
+    if not sid_aligned and sid_exits:
+        sid_aligned = sid_exits
+    if not star_aligned and star_entries:
+        star_aligned = star_entries
+
+    sid_options = sorted(
+        sid_aligned.items(),
+        key=lambda kv: _great_circle_nm(o_pt, (kv[1]["lat"], kv[1]["lon"])),
+    )[:3]
+    star_options = sorted(
+        star_aligned.items(),
+        key=lambda kv: _great_circle_nm((kv[1]["lat"], kv[1]["lon"]), d_pt),
+    )[:3]
+
+    sid_list: list[tuple[str | None, dict | None]] = [(None, None)] + list(sid_options)
+    star_list: list[tuple[str | None, dict | None]] = [(None, None)] + list(star_options)
+
+    best: tuple[str | None, str | None, SuggestedRoute] | None = None
+    best_total = float("inf")
+    pairs_tried = 0
+    for sid_e, sid_d in sid_list:
+        for star_e, star_d in star_list:
+            if pairs_tried >= max_pairs and (sid_e or star_e):
+                continue
+            pairs_tried += 1
+            o_label = sid_e or origin_icao
+            o_p = (sid_d["lat"], sid_d["lon"]) if sid_d else o_pt
+            d_label = star_e or destination_icao
+            d_p = (star_d["lat"], star_d["lon"]) if star_d else d_pt
+            sug = _suggest_between_labeled_points(
+                o_label, o_p, d_label, d_p,
+                corridor_nm=corridor_nm, k_neighbours=k_neighbours,
+                airspace_penalties=airspace_penalties, fl=fl,
+            )
+            if not sug.waypoints or sug.distance_nm == 0:
+                continue
+            approach_in = _great_circle_nm(o_pt, o_p) if sid_e else 0.0
+            approach_out = _great_circle_nm(d_p, d_pt) if star_e else 0.0
+            total = sug.distance_nm + approach_in + approach_out
+            if total < best_total:
+                best_total = total
+                best = (sid_e, star_e, sug)
+
+    if best is None:
+        sug = suggest_route(
+            origin_icao, destination_icao, corridor_nm=corridor_nm,
+            k_neighbours=k_neighbours, airspace_penalties=airspace_penalties, fl=fl,
+        )
+        return sug, None, None
+
+    sid_e, star_e, sug = best
+    sid_pick = _pick_proc_for_endpoint(origin_icao, sid_e, "SID", min_runway_ft) if sid_e else None
+    star_pick = _pick_proc_for_endpoint(destination_icao, star_e, "STAR", min_runway_ft) if star_e else None
+    return sug, sid_pick, star_pick
 
 
 def _expand_truncated_proc_name(proc_name: str, waypoints: list[str]) -> str:
