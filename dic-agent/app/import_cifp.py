@@ -45,36 +45,39 @@ def _parse_cifp_record(line: str) -> dict | None:
 
     Returns None for non-procedure lines (RWY/PRDAT/comments/empty).
 
-    The parser is intentionally lenient — CIFP record layouts vary slightly
-    across X-Plane versions and ARINC dialects, but the early fields are
-    stable: type, sequence, route_type, name, transition, runway, fix_ident.
+    X-Plane CIFP record format (per-row, ARINC 424 derived):
+
+      <type>:<seq>,<route_type>,<proc_name>,<trans_ident>,<fix_ident>,<fix_region>,<sec>,<sub>,...
+
+      0: <type>:<seq>     ('SID:010', 'STAR:020', 'APPCH:030')
+      1: route_type code  (1-15, ARINC 424 path terminator)
+      2: procedure name   ('BADO1N', 'MUS5G', …)
+      3: transition ident ('RW04', 'ALL', or a fix name — runway transition
+                           if it starts with 'RW', else enroute transition)
+      4: fix identifier   ('ROLUP', 'DIMAD', 'ADUDU', …)
+      5: fix region       ('LF', 'EG', 'K1', …) — country/FIR code, NOT a fix
+      6+: section code, descriptor, turn direction, RNP, path term, etc.
     """
     line = line.strip()
     m = HEADER_RE.match(line)
     if not m:
         return None
     proc_type = m.group(1).upper()
-    body = line[len(m.group(0)):]  # everything after 'SID:'
+    body = line[len(m.group(0)):]
     fields = [f.strip() for f in body.split(",")]
-    if len(fields) < 6:
+    if len(fields) < 5:
         return None
-    # Field layout (best-effort):
-    #   0: sequence number ('010', '020'…)
-    #   1: route type code (B, F, R, S, …)
-    #   2: procedure name
-    #   3: transition identifier (or blank)
-    #   4: runway identifier (e.g. 'RW16R') or blank
-    #   5: fix identifier
-    #   6: fix region (2-letter)
     name = fields[2].upper()
-    transition = fields[3].upper() or None
-    runway = fields[4].upper().lstrip("RW") or None
-    fix_ident = fields[5].upper()
+    trans = fields[3].upper() if len(fields) > 3 else ""
+    fix_ident = fields[4].upper() if len(fields) > 4 else ""
+    runway = trans[2:] if trans.startswith("RW") else None
+    if runway == "":
+        runway = None
     if not name or not fix_ident:
         return None
     return {
         "proc_type": proc_type, "name": name,
-        "transition": transition, "runway": runway,
+        "transition": trans or None, "runway": runway,
         "fix_ident": fix_ident,
     }
 
