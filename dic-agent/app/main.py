@@ -349,44 +349,54 @@ def _leg_editor(idx: int, leg: dict) -> dict:
     if msg:
         st.success(msg)
 
-    # SID / STAR pickers — visible only if origin/destination has procedures
-    # in DB (i.e. user ran `python -m app.import_cifp`).
+    # SID / STAR manual override — hidden in an expander by default. The
+    # auto-pick in "✨ Suggérer" handles the common case; this is the escape
+    # hatch when the auto choice is wrong (e.g. ATIS specifies a different
+    # runway). Lists are pre-filtered by the aircraft's min runway length.
     sids = db.list_procedures(origin, "SID") if origin else []
     stars = db.list_procedures(destination, "STAR") if destination else []
+    if (sids or stars) and (ac_perf and ac_perf["min_runway_ft"]):
+        min_rwy_filter = int(ac_perf["min_runway_ft"])
+        def _ok(rec, icao):
+            ok, _ = route_suggester._runways_compatible(icao, rec["runways_csv"], min_rwy_filter)
+            return bool(ok) if rec["runways_csv"] else True
+        sids = [r for r in sids if _ok(r, origin)]
+        stars = [r for r in stars if _ok(r, destination)]
     if sids or stars:
-        pc1, pc2 = st.columns(2)
-        with pc1:
-            if sids:
-                opts = ["— aucun —"] + [
-                    f"{r['proc_name']}  (rwy {r['runways_csv'] or '-'})  →  "
-                    + (json.loads(r['waypoints_json'])[-1] if json.loads(r['waypoints_json']) else '?')
-                    for r in sids
-                ]
-                pick = st.selectbox(f"SID au départ {origin}", opts, key=f"{kprefix}_sid")
-                if pick != "— aucun —":
-                    chosen_name = pick.split()[0]
-                    current_route = route_text or ""
-                    if not current_route.upper().startswith(chosen_name):
-                        new_route = f"{chosen_name} {current_route}".strip()
-                        if new_route != current_route:
-                            st.session_state[f"_pending_route_{sid}_{idx}"] = new_route
-                            st.rerun()
-        with pc2:
-            if stars:
-                opts = ["— aucun —"] + [
-                    f"{r['proc_name']}  (rwy {r['runways_csv'] or '-'})  ←  "
-                    + (json.loads(r['waypoints_json'])[0] if json.loads(r['waypoints_json']) else '?')
-                    for r in stars
-                ]
-                pick = st.selectbox(f"STAR à l'arrivée {destination}", opts, key=f"{kprefix}_star")
-                if pick != "— aucun —":
-                    chosen_name = pick.split()[0]
-                    current_route = route_text or ""
-                    if not current_route.upper().endswith(chosen_name):
-                        new_route = f"{current_route} {chosen_name}".strip()
-                        if new_route != current_route:
-                            st.session_state[f"_pending_route_{sid}_{idx}"] = new_route
-                            st.rerun()
+        with st.expander("🔧 Override SID/STAR manuel", expanded=False):
+            pc1, pc2 = st.columns(2)
+            with pc1:
+                if sids:
+                    opts = ["— aucun —"] + [
+                        f"{r['proc_name']}  (rwy {r['runways_csv'] or '-'})  →  "
+                        + (json.loads(r['waypoints_json'])[-1] if json.loads(r['waypoints_json']) else '?')
+                        for r in sids
+                    ]
+                    pick = st.selectbox(f"SID au départ {origin}", opts, key=f"{kprefix}_sid")
+                    if pick != "— aucun —":
+                        chosen_name = pick.split()[0]
+                        current_route = route_text or ""
+                        if not current_route.upper().startswith(chosen_name):
+                            new_route = f"{chosen_name} {current_route}".strip()
+                            if new_route != current_route:
+                                st.session_state[f"_pending_route_{sid}_{idx}"] = new_route
+                                st.rerun()
+            with pc2:
+                if stars:
+                    opts = ["— aucun —"] + [
+                        f"{r['proc_name']}  (rwy {r['runways_csv'] or '-'})  ←  "
+                        + (json.loads(r['waypoints_json'])[0] if json.loads(r['waypoints_json']) else '?')
+                        for r in stars
+                    ]
+                    pick = st.selectbox(f"STAR à l'arrivée {destination}", opts, key=f"{kprefix}_star")
+                    if pick != "— aucun —":
+                        chosen_name = pick.split()[0]
+                        current_route = route_text or ""
+                        if not current_route.upper().endswith(chosen_name):
+                            new_route = f"{current_route} {chosen_name}".strip()
+                            if new_route != current_route:
+                                st.session_state[f"_pending_route_{sid}_{idx}"] = new_route
+                                st.rerun()
 
     return {
         "origin": origin,
