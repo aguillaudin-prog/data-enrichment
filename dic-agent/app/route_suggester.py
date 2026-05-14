@@ -376,6 +376,68 @@ def suggest_route(
     )
 
 
+def pick_procedure(
+    airport_icao: str,
+    connecting_fix: str | None,
+    proc_type: str,
+) -> dict | None:
+    """Pick the best SID or STAR for an airport given the connecting fix.
+
+    Scoring (higher = better):
+      +1000   procedure exit (SID) / entry (STAR) fix == `connecting_fix`
+      + 500   `connecting_fix` appears anywhere in the procedure path
+      +0..100 fallback: 100 minus great-circle NM from connect-fix to
+              `connecting_fix` (if both resolvable, capped at 80 NM)
+      +0.5*N  bonus per runway served (broader = more flexible to wind)
+
+    Returns the chosen procedure as a dict augmented with `waypoints`
+    (parsed list) and `connecting_fix`, or None if nothing suitable.
+    """
+    if not airport_icao or not connecting_fix:
+        return None
+    procs = db.list_procedures(airport_icao, proc_type)
+    if not procs:
+        return None
+    fix_u = connecting_fix.upper()
+    target_wp = db.find_waypoint(fix_u)
+    target_pt = (target_wp["lat"], target_wp["lon"]) if target_wp else None
+    candidates: list[tuple[float, dict, str]] = []
+    for p in procs:
+        try:
+            wpts = json.loads(p["waypoints_json"])
+        except Exception:
+            continue
+        if not wpts:
+            continue
+        connect = wpts[-1] if proc_type == "SID" else wpts[0]
+        connect_u = connect.upper()
+        if connect_u == fix_u:
+            score = 1000.0
+        elif fix_u in {w.upper() for w in wpts}:
+            score = 500.0
+        elif target_pt:
+            wp = db.find_waypoint(connect_u)
+            if not wp:
+                continue
+            d = _great_circle_nm(target_pt, (wp["lat"], wp["lon"]))
+            if d > 80.0:
+                continue
+            score = 100.0 - d
+        else:
+            continue
+        rwys = [r for r in (p["runways_csv"] or "").split(",") if r]
+        score += len(rwys) * 0.5
+        candidates.append((score, dict(p), connect))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: -x[0])
+    score, best, connect = candidates[0]
+    best["waypoints"] = json.loads(best["waypoints_json"])
+    best["connecting_fix"] = connect
+    best["score"] = score
+    return best
+
+
 def airspace_penalty_rows_for_country(country_iso2: str) -> list[dict]:
     cache = Path(__file__).resolve().parent.parent / "seeds" / f"openaip_airspaces_{country_iso2.upper()}.json"
     if not cache.exists():

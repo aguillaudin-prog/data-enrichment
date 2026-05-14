@@ -278,11 +278,34 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                 with st.spinner("Calcul A*…"):
                     sug = route_suggester.suggest_route(origin, destination)
                 if sug.waypoints and sug.distance_nm > 0:
-                    st.session_state[f"_pending_route_{sid}_{idx}"] = sug.route_text
-                    st.session_state[f"_pending_suggest_msg_{sid}_{idx}"] = (
-                        f"Route suggérée : `{sug.route_text}` "
+                    enroute = sug.route_text
+                    enroute_tokens = [t for t in enroute.split() if t and t != "DCT"]
+                    first_fix = enroute_tokens[0] if enroute_tokens else None
+                    last_fix = enroute_tokens[-1] if enroute_tokens else None
+                    sid_pick = route_suggester.pick_procedure(origin, first_fix, "SID")
+                    star_pick = route_suggester.pick_procedure(destination, last_fix, "STAR")
+                    full_route = enroute
+                    extras: list[str] = []
+                    if sid_pick:
+                        full_route = f"{sid_pick['proc_name']} {full_route}".strip()
+                        extras.append(
+                            f"SID **{sid_pick['proc_name']}** "
+                            f"(rwy {sid_pick['runways_csv'] or '-'} → {sid_pick['connecting_fix']})"
+                        )
+                    if star_pick:
+                        full_route = f"{full_route} {star_pick['proc_name']}".strip()
+                        extras.append(
+                            f"STAR **{star_pick['proc_name']}** "
+                            f"({star_pick['connecting_fix']} → rwy {star_pick['runways_csv'] or '-'})"
+                        )
+                    st.session_state[f"_pending_route_{sid}_{idx}"] = full_route
+                    msg = (
+                        f"Route suggérée : `{full_route}` "
                         f"({sug.distance_nm:.0f} NM, {sug.nodes_explored} nœuds explorés)"
                     )
+                    if extras:
+                        msg += "  \nAuto-sélection : " + " · ".join(extras)
+                    st.session_state[f"_pending_suggest_msg_{sid}_{idx}"] = msg
                     st.rerun()
                 else:
                     st.error("Pas de route trouvée — vérifie les ICAO d'origine/destination.")
