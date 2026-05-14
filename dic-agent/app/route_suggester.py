@@ -484,10 +484,10 @@ def _arrival_corridor_score(
     """
     if endpoint_type == "STAR":
         dist = _great_circle_nm(entry_pt, d_pt)
-        band_lo, band_hi = 30.0, 300.0
+        band_lo, band_hi = 60.0, 300.0
     else:
         dist = _great_circle_nm(entry_pt, o_pt)
-        band_lo, band_hi = 10.0, 150.0
+        band_lo, band_hi = 15.0, 150.0
     if dist < band_lo:
         band_penalty = (band_lo - dist) * 5.0
     elif dist > band_hi:
@@ -522,7 +522,17 @@ def _pick_proc_for_endpoint(
         end = (wpts[-1] if proc_type == "SID" else wpts[0]).upper()
         if end != endpoint_u:
             continue
-        candidates.append((len(ok_rwys) * 0.5, dict(p), ok_rwys))
+        # Prefer the canonical 'common segment' record (ARINC 424 route_type
+        # 2/3), which CIFP stores with no runway constraint ('ALL' → None in
+        # our parser). Runway-specific records (route_type 4/5) are transitions
+        # that hang off the main procedure; commercial validators like
+        # RocketRoute typically only stock the canonical name (OXID1V), not
+        # every transition (OXID1B/E/G).
+        if not p["runways_csv"]:
+            score = 100.0
+        else:
+            score = len(ok_rwys) * 0.5
+        candidates.append((score, dict(p), ok_rwys))
     if not candidates:
         return None
     candidates.sort(key=lambda x: -x[0])
@@ -544,7 +554,7 @@ def suggest_with_procedures(
     k_neighbours: int = 8,
     airspace_penalties: list[dict] | None = None,
     max_pairs: int = 25,
-    proc_bonus_nm: float = 40.0,
+    proc_bonus_nm: float = 80.0,
 ) -> tuple[SuggestedRoute, dict | None, dict | None]:
     """Full IFR route — enumerates plausible (SID exit, STAR entry) pairs
     and picks the combination whose A* gives the shortest total path.
@@ -639,12 +649,19 @@ def suggest_with_procedures(
             approach_in = _great_circle_nm(o_pt, o_p) if sid_e else 0.0
             approach_out = _great_circle_nm(d_p, d_pt) if star_e else 0.0
             # Operational-completeness bonus: prefer routes that include a
-            # SID and a STAR even if they're up to `proc_bonus_nm` longer
-            # than the bare airport-to-airport path. A validated route with
-            # terminal procedures is operationally better than a slightly
-            # shorter procedureless route.
+            # SID and a STAR even if they're a bit longer than the bare
+            # airport-to-airport path. Validated terminal procedures are
+            # operationally worth a small distance premium.
             bonus = (proc_bonus_nm if sid_e else 0.0) + (proc_bonus_nm if star_e else 0.0)
-            total = sug.distance_nm + approach_in + approach_out - bonus
+            # Corridor penalty: the endpoint's deviation from the canonical
+            # arrival/departure corridor (cross-track distance + range-band
+            # violation) is added to the cost. Weight 2.0 ensures that a
+            # well-positioned cornerpost (OXIDU, ~20) beats a closer-but-
+            # off-axis terminal-vicinity fix (UMOVO, ~57) on routes where
+            # raw distance alone would prefer the latter.
+            sid_pen = _arrival_corridor_score(o_p, o_pt, d_pt, "SID") if sid_e else 0.0
+            star_pen = _arrival_corridor_score(d_p, o_pt, d_pt, "STAR") if star_e else 0.0
+            total = sug.distance_nm + approach_in + approach_out + 2.0 * (sid_pen + star_pen) - bonus
             if total < best_total:
                 best_total = total
                 best = (sid_e, star_e, sug)
