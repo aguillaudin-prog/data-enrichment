@@ -376,6 +376,36 @@ def suggest_route(
     )
 
 
+def _expand_truncated_proc_name(proc_name: str, waypoints: list[str]) -> str:
+    """Reverse the ARINC 424 6-char truncation of a procedure name.
+
+    ARINC 424 / CIFP cap procedure names at 6 characters. When the
+    underlying fix is 5+ letters (e.g. MAMES → 'MAMES6N' = 7 chars),
+    CIFP truncates to 6 ('MAME6N'). Real-world AIP / Eurocontrol / OPS
+    tools (RocketRoute, Lido, Foreflight) use the *full* name from the
+    AIP, so submitting the truncated form fails IFPS lookup.
+
+    Heuristic: if the proc_name is exactly 6 chars of pattern
+    ``<4 letters><digit><letter>``, look at the procedure's own
+    waypoints for a fix starting with those 4 letters and longer than
+    4 — that's the truncated fix. Splice it back in.
+
+    Conservative: pure 4-letter fixes (BADO, RUBI, MUS, AGN…) where
+    the name is already canonical are left untouched.
+    """
+    if len(proc_name) != 6:
+        return proc_name
+    if not (proc_name[:4].isalpha() and proc_name[4].isdigit() and proc_name[5].isalpha()):
+        return proc_name
+    prefix = proc_name[:4]
+    suffix = proc_name[4:]
+    for wp in waypoints:
+        wp_u = (wp or "").upper()
+        if wp_u.startswith(prefix) and 4 < len(wp_u) <= 5:
+            return wp_u + suffix
+    return proc_name
+
+
 def _runways_compatible(
     airport_icao: str, runways_csv: str | None, min_runway_ft: int | None,
 ) -> tuple[list[str], list[str]]:
@@ -463,6 +493,7 @@ def pick_procedure(
     best["waypoints"] = json.loads(best["waypoints_json"])
     best["connecting_fix"] = connect
     best["score"] = score
+    best["proc_name"] = _expand_truncated_proc_name(best["proc_name"], best["waypoints"])
     return best
 
 
