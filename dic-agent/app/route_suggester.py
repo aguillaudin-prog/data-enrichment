@@ -430,11 +430,13 @@ def _collect_procedure_endpoints(
 
 def _direction_aligned(
     from_pt: tuple[float, float], to_pt: tuple[float, float],
-    target_bearing: float, tolerance_deg: float = 110.0,
+    target_bearing: float, tolerance_deg: float = 135.0,
 ) -> bool:
     """Whether the bearing from_pt → to_pt is within tolerance of the
     overall origin-destination bearing. Filters out SID/STAR endpoints
-    that would send the route backwards."""
+    that would send the route backwards. Tolerance is generous (135°)
+    because some terminal procedures legitimately use approach angles
+    that look 'off' on a great-circle but are operationally standard."""
     b = _bearing(from_pt, to_pt)
     diff = ((b - target_bearing + 540.0) % 360.0) - 180.0
     return abs(diff) <= tolerance_deg
@@ -485,7 +487,8 @@ def suggest_with_procedures(
     corridor_nm: float = 100.0,
     k_neighbours: int = 8,
     airspace_penalties: list[dict] | None = None,
-    max_pairs: int = 9,
+    max_pairs: int = 25,
+    proc_bonus_nm: float = 40.0,
 ) -> tuple[SuggestedRoute, dict | None, dict | None]:
     """Full IFR route — enumerates plausible (SID exit, STAR entry) pairs
     and picks the combination whose A* gives the shortest total path.
@@ -575,7 +578,13 @@ def suggest_with_procedures(
                 continue
             approach_in = _great_circle_nm(o_pt, o_p) if sid_e else 0.0
             approach_out = _great_circle_nm(d_p, d_pt) if star_e else 0.0
-            total = sug.distance_nm + approach_in + approach_out
+            # Operational-completeness bonus: prefer routes that include a
+            # SID and a STAR even if they're up to `proc_bonus_nm` longer
+            # than the bare airport-to-airport path. A validated route with
+            # terminal procedures is operationally better than a slightly
+            # shorter procedureless route.
+            bonus = (proc_bonus_nm if sid_e else 0.0) + (proc_bonus_nm if star_e else 0.0)
+            total = sug.distance_nm + approach_in + approach_out - bonus
             if total < best_total:
                 best_total = total
                 best = (sid_e, star_e, sug)
