@@ -449,18 +449,24 @@ st.title("🛩️ DIC Agent — Diplomatic Clearance generator")
 st.caption("FRA / ICAO — application locale. Données : OurAirports + Natural Earth.")
 
 # Make the tab bar sticky so it stays visible while scrolling inside a tab.
-# Streamlit doesn't expose a sticky-tabs option natively, so we inject CSS
-# targeting the BaseWeb tab list (stable selectors as of streamlit 1.30+).
+# Streamlit's BaseWeb tab-list is the most stable selector across versions.
+# We also force overflow:visible on the main block container and the stTabs
+# wrapper, otherwise the parent clips the sticky child.
 st.markdown(
     """
     <style>
-      div[data-testid="stTabs"] > div:first-child {
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        background: var(--background-color, white);
-        padding-top: 0.25rem;
-        border-bottom: 1px solid rgba(49, 51, 63, 0.15);
+      .stApp [data-baseweb="tab-list"] {
+        position: sticky !important;
+        top: 2.875rem;
+        z-index: 999;
+        background-color: var(--background-color, white);
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+      }
+      .stApp [data-testid="stTabs"],
+      .stApp section.main > div.block-container {
+        overflow: visible !important;
       }
     </style>
     """,
