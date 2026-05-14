@@ -448,44 +448,27 @@ def _missing_point_form(label: str, key: str) -> None:
 st.title("🛩️ DIC Agent — Diplomatic Clearance generator")
 st.caption("FRA / ICAO — application locale. Données : OurAirports + Natural Earth.")
 
-# Make the tab bar sticky so it stays visible while scrolling inside a tab.
-# Streamlit's BaseWeb tab-list is the most stable selector across versions.
-# We also force overflow:visible on the main block container and the stTabs
-# wrapper, otherwise the parent clips the sticky child.
-st.markdown(
-    """
-    <style>
-      .stApp [data-baseweb="tab-list"] {
-        position: sticky !important;
-        top: 2.875rem;
-        z-index: 999;
-        background-color: var(--background-color, white);
-        padding-top: 0.5rem;
-        padding-bottom: 0.5rem;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
-      }
-      .stApp [data-testid="stTabs"],
-      .stApp section.main > div.block-container {
-        overflow: visible !important;
-      }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 if "legs" not in st.session_state:
     st.session_state.legs = [
         {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
     ]
 
+# Sidebar-based navigation. Streamlit's st.tabs scrolls out of view on long
+# forms and there's no reliable CSS hack across versions to make it sticky,
+# so the 3 sections are selected via a radio in the sidebar (which is sticky
+# by construction).
+PAGES = ["1️⃣ Mission & profils", "2️⃣ Legs", "3️⃣ Preview & export"]
 with st.sidebar:
     st.header("DIC Agent")
+    page = st.radio("Étape", PAGES, label_visibility="collapsed")
+    st.divider()
     _mission_done = bool((st.session_state.get("mission") or {}).get("registration"))
     _legs_done = any(
         leg.get("origin") and leg.get("destination") and leg.get("route_text")
         for leg in st.session_state.legs
     )
     st.markdown(
+        f"**Progression**\n\n"
         f"- {'✅' if _mission_done else '⬜'} Mission renseignée\n"
         f"- {'✅' if _legs_done else '⬜'} Au moins un leg complet"
     )
@@ -498,11 +481,7 @@ with st.sidebar:
         "`N 9°34'45.56\" / E 3°14'7.09\"` ou `N9 34 45 / E3 14 7`."
     )
 
-tab_mission, tab_legs, tab_preview = st.tabs(
-    ["1️⃣ Mission & profils", "2️⃣ Legs", "3️⃣ Preview & export"]
-)
-
-with tab_mission:
+if page == PAGES[0]:
     c1, c2, c3 = st.columns(3)
     with c1:
         reference = st.text_input("Reference number", value="MSG DU " + dt.date.today().strftime("%d/%m/%Y"))
@@ -635,7 +614,7 @@ def _reset_to_blank_mission() -> None:
     st.session_state.pop("_loaded_tpl_name", None)
 
 
-with tab_legs:
+if page == PAGES[1]:
     tpl_rows = db.list_route_templates()
     by_cat: dict[str, list] = {}
     for r in tpl_rows:
@@ -715,7 +694,7 @@ with tab_legs:
             st.rerun()
 
 
-with tab_preview:
+if page == PAGES[2]:
     if not st.session_state.legs or not any(l.get("origin") for l in st.session_state.legs):
         st.info("Saisis au moins un leg avec une origine.")
         st.stop()
