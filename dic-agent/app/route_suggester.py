@@ -442,6 +442,62 @@ def _direction_aligned(
     return abs(diff) <= tolerance_deg
 
 
+def _cross_track_nm(
+    o_pt: tuple[float, float], d_pt: tuple[float, float],
+    p_pt: tuple[float, float],
+) -> float:
+    """Perpendicular distance from p_pt to the great-circle line o→d,
+    in NM. Flat-Earth law-of-cosines projection — adequate up to a few
+    thousand NM, where great-circles barely curve at this scale.
+    """
+    od = _great_circle_nm(o_pt, d_pt)
+    if od == 0:
+        return 0.0
+    op = _great_circle_nm(o_pt, p_pt)
+    pd = _great_circle_nm(p_pt, d_pt)
+    along = (od ** 2 + op ** 2 - pd ** 2) / (2.0 * od)
+    cross_sq = op ** 2 - along ** 2
+    return math.sqrt(cross_sq) if cross_sq > 0 else 0.0
+
+
+def _arrival_corridor_score(
+    entry_pt: tuple[float, float],
+    o_pt: tuple[float, float], d_pt: tuple[float, float],
+    endpoint_type: str,
+) -> float:
+    """Score how well an endpoint suits its role as SID exit or STAR
+    entry. Lower is better.
+
+    Two principles:
+
+      1. **Range to the relevant airfield**: a SID exit should sit 10-150
+         NM out of origin, a STAR entry 30-300 NM out of destination.
+         Anything outside that band is either a terminal fix (too close)
+         or a phantom alignment (too far). Soft penalty applied per NM
+         outside the band.
+      2. **Closeness to the great-circle OD line**: small cross-track
+         distance preferred (natural arrival, not a detour).
+
+    Without this, top-K sorting by raw distance to the airfield picks
+    terminal vicinity fixes (BULSA/BUROM at < 5 NM from DFFD) over the
+    actual published arrival cornerpost (OXIDU at ~100 NM).
+    """
+    if endpoint_type == "STAR":
+        dist = _great_circle_nm(entry_pt, d_pt)
+        band_lo, band_hi = 30.0, 300.0
+    else:
+        dist = _great_circle_nm(entry_pt, o_pt)
+        band_lo, band_hi = 10.0, 150.0
+    if dist < band_lo:
+        band_penalty = (band_lo - dist) * 5.0
+    elif dist > band_hi:
+        band_penalty = (dist - band_hi) * 2.0
+    else:
+        band_penalty = 0.0
+    cross = _cross_track_nm(o_pt, d_pt, entry_pt)
+    return band_penalty + cross * 1.5
+
+
 def _pick_proc_for_endpoint(
     airport_icao: str, endpoint_fix: str, proc_type: str,
     min_runway_ft: int | None,
@@ -547,12 +603,16 @@ def suggest_with_procedures(
 
     sid_options = sorted(
         sid_aligned.items(),
-        key=lambda kv: _great_circle_nm(o_pt, (kv[1]["lat"], kv[1]["lon"])),
-    )[:3]
+        key=lambda kv: _arrival_corridor_score(
+            (kv[1]["lat"], kv[1]["lon"]), o_pt, d_pt, "SID",
+        ),
+    )[:4]
     star_options = sorted(
         star_aligned.items(),
-        key=lambda kv: _great_circle_nm((kv[1]["lat"], kv[1]["lon"]), d_pt),
-    )[:3]
+        key=lambda kv: _arrival_corridor_score(
+            (kv[1]["lat"], kv[1]["lon"]), o_pt, d_pt, "STAR",
+        ),
+    )[:5]
 
     sid_list: list[tuple[str | None, dict | None]] = [(None, None)] + list(sid_options)
     star_list: list[tuple[str | None, dict | None]] = [(None, None)] + list(star_options)
