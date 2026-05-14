@@ -56,6 +56,18 @@ AIRCRAFT_TYPE_PERF = [
         "approach_cat": "A",
         "climb_gradient_pct": 8.0,
     },
+    {
+        "icao_designator": "L410",
+        "full_name": "LET L-410 Turbolet",
+        "manufacturer": "LET Kunovice",
+        "cruise_tas_kt": 195,
+        "service_ceiling_ft": 14500,
+        "range_nm": 700,
+        "wake_category": "L",
+        "min_runway_ft": 1700,
+        "approach_cat": "A",
+        "climb_gradient_pct": 7.5,
+    },
 ]
 
 DEFAULT_POCS = [

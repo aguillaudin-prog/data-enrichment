@@ -262,6 +262,29 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                 f"({ac_perf['service_ceiling_ft']} ft = FL{ceiling_fl:03d}). "
                 f"Réduis le FL ou change d'appareil."
             )
+    if ac_perf and ac_perf["climb_gradient_pct"] and origin and destination and int(fl) > 0:
+        ap_o = db.find_airport(origin)
+        ap_d = db.find_airport(destination)
+        if ap_o and ap_d:
+            leg_nm = route_engine._great_circle_nm(
+                (ap_o["lat"], ap_o["lon"]), (ap_d["lat"], ap_d["lon"])
+            )
+            grad = float(ac_perf["climb_gradient_pct"])
+            descent_grad = 5.0  # ~3° standard descent profile for light aircraft
+            alt_ft = int(fl) * 100
+            climb_nm = alt_ft / (60.76 * grad)
+            descent_nm = alt_ft / (60.76 * descent_grad)
+            needed = climb_nm + descent_nm
+            if leg_nm < needed:
+                max_alt_ft = leg_nm * 60.76 * grad * descent_grad / (grad + descent_grad)
+                max_fl = int(max_alt_ft // 100 // 10) * 10  # round down to nearest 10
+                st.warning(
+                    f"FL{int(fl):03d} géométriquement irréaliste sur ce leg : "
+                    f"montée ≈ {climb_nm:.0f} NM + descente ≈ {descent_nm:.0f} NM "
+                    f"= {needed:.0f} NM requis, leg = {leg_nm:.0f} NM. "
+                    f"Le DIC reporterait des heures de passage fausses. "
+                    f"FL conseillé ≤ FL{max_fl:03d}."
+                )
 
     c5, c6 = st.columns(2)
     with c5:
