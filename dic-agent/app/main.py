@@ -312,7 +312,7 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                 min_rwy = int(ac_perf["min_runway_ft"]) if (ac_perf and ac_perf["min_runway_ft"]) else None
                 with st.spinner("Calcul A*…"):
                     sug, sid_pick, star_pick = route_suggester.suggest_with_procedures(
-                        origin, destination, fl=int(fl), min_runway_ft=min_rwy,
+                        origin, destination, min_runway_ft=min_rwy,
                     )
                 if sug.waypoints and sug.distance_nm > 0:
                     enroute = sug.route_text
