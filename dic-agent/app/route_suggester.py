@@ -49,42 +49,47 @@ class SuggestedRoute:
     def route_text(self) -> str:
         """Render FPL field 15 ROUTE in compact ICAO Doc 4444 format.
 
-        - Drops origin/destination ICAOs (they live in field 13/16).
-        - Collapses consecutive segments on the same airway to just
-          `<entry> <airway> <exit>`. Intermediate fixes on the same airway
-          are implicit, as required by IFPS.
-        - Strips stray leading/trailing 'DCT' tokens (implicit from the
-          aerodrome).
+        Models the route as a sequence of (edge, fix) steps starting at
+        the origin label. For each step the edge is either an airway
+        name or 'DCT'. The endpoint origin/destination are dropped from
+        the text (they live in field 13/16 for airports, or in the
+        SID/STAR name for procedure-aware routing).
+
+        Consecutive steps on the same airway are compressed so
+        intermediate fixes are implicit, per IFPS:
+          ``M984 BISBA, M984 BGR`` → ``M984 BGR``.
+
+        Stray leading/trailing DCT tokens are stripped (implicit from
+        airport or SID/STAR boundary).
 
         Examples:
           [DBBB, EBUSO, ARABA, ABC, DNAA] + edges [DCT, UA601, UA602, DCT]
             → 'EBUSO UA601 ARABA UA602 ABC'
-          [LFMD, ADUDU, LERMA, EPOLO, MAMES, BISBA, BGR, LEIB] + edges
-            [DCT, N86, N86, N86, M984, M984, DCT]
-            → 'ADUDU N86 MAMES M984 BGR'
+          [MAMES, BISBA, BGR, BCN, CORDA] + edges [M984, M984, N975, DCT]
+            → 'M984 BGR N975 BCN'
         """
+        if len(self.waypoints) < 2:
+            return "DCT"
         inner = self.waypoints[1:-1]
         if not inner:
             return "DCT"
-        joins = self.edge_labels[1:-1] if len(self.edge_labels) >= 2 else []
-        parts: list[str] = [inner[0]]
-        i = 0
-        while i < len(joins):
-            edge = joins[i] or "DCT"
-            if edge != "DCT":
-                j = i
-                while j + 1 < len(joins) and joins[j + 1] == edge:
-                    j += 1
-                parts.append(edge)
-                parts.append(inner[j + 1])
-                i = j + 1
+        pairs: list[tuple[str, str]] = []
+        for i, fix in enumerate(inner):
+            edge = self.edge_labels[i] if i < len(self.edge_labels) else "DCT"
+            pairs.append((edge or "DCT", fix))
+        compressed: list[tuple[str, str]] = [pairs[0]]
+        for edge, fix in pairs[1:]:
+            if edge == compressed[-1][0] and edge != "DCT":
+                compressed[-1] = (edge, fix)
             else:
-                parts.append("DCT")
-                parts.append(inner[i + 1])
-                i += 1
-        while len(parts) > 1 and parts[0] == "DCT":
+                compressed.append((edge, fix))
+        parts: list[str] = []
+        for edge, fix in compressed:
+            parts.append(edge)
+            parts.append(fix)
+        while parts and parts[0] == "DCT":
             parts.pop(0)
-        while len(parts) > 1 and parts[-1] == "DCT":
+        while parts and parts[-1] == "DCT":
             parts.pop()
         return " ".join(parts) if parts else "DCT"
 

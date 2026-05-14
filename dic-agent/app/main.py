@@ -319,16 +319,29 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                     full_route = enroute
                     extras: list[str] = []
                     if sid_pick:
-                        full_route = f"{sid_pick['proc_name']} {full_route}".strip()
+                        # Explicit format <SID_name> <SID_exit> <enroute>: avoids
+                        # RocketRoute / IFPS parsing the first enroute token as
+                        # a SID transition. The exit fix is the unambiguous
+                        # transition identifier.
+                        exit_fix = sid_pick["connecting_fix"]
+                        if enroute and not enroute.split()[0].upper() == exit_fix.upper():
+                            full_route = f"{sid_pick['proc_name']} {exit_fix} {enroute}".strip()
+                        else:
+                            full_route = f"{sid_pick['proc_name']} {enroute}".strip()
                         extras.append(
                             f"SID **{sid_pick['proc_name']}** "
-                            f"(rwy {sid_pick['runways_csv'] or '-'} → {sid_pick['connecting_fix']})"
+                            f"(rwy {sid_pick['runways_csv'] or '-'} → {exit_fix})"
                         )
                     if star_pick:
-                        full_route = f"{full_route} {star_pick['proc_name']}".strip()
+                        entry_fix = star_pick["connecting_fix"]
+                        tokens = full_route.split()
+                        if tokens and tokens[-1].upper() != entry_fix.upper():
+                            full_route = f"{full_route} {entry_fix} {star_pick['proc_name']}".strip()
+                        else:
+                            full_route = f"{full_route} {star_pick['proc_name']}".strip()
                         extras.append(
                             f"STAR **{star_pick['proc_name']}** "
-                            f"({star_pick['connecting_fix']} → rwy {star_pick['runways_csv'] or '-'})"
+                            f"({entry_fix} → rwy {star_pick['runways_csv'] or '-'})"
                         )
                     st.session_state[f"_pending_route_{sid}_{idx}"] = full_route
                     msg = (
