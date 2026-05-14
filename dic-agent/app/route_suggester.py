@@ -47,29 +47,46 @@ class SuggestedRoute:
 
     @property
     def route_text(self) -> str:
-        """Render FPL field 15 ROUTE.
+        """Render FPL field 15 ROUTE in compact ICAO Doc 4444 format.
 
-        Convention: inner waypoints separated by airway names (or 'DCT' when
-        no airway link). Origin and destination are dropped, but the airway
-        used to JOIN consecutive inner points is preserved.
+        - Drops origin/destination ICAOs (they live in field 13/16).
+        - Collapses consecutive segments on the same airway to just
+          `<entry> <airway> <exit>`. Intermediate fixes on the same airway
+          are implicit, as required by IFPS.
+        - Strips stray leading/trailing 'DCT' tokens (implicit from the
+          aerodrome).
 
         Examples:
           [DBBB, EBUSO, ARABA, ABC, DNAA] + edges [DCT, UA601, UA602, DCT]
             → 'EBUSO UA601 ARABA UA602 ABC'
-          [DBBB, DXXX] + edges [DCT]
-            → 'DCT'
+          [LFMD, ADUDU, LERMA, EPOLO, MAMES, BISBA, BGR, LEIB] + edges
+            [DCT, N86, N86, N86, M984, M984, DCT]
+            → 'ADUDU N86 MAMES M984 BGR'
         """
         inner = self.waypoints[1:-1]
         if not inner:
             return "DCT"
-        # edges between inner waypoints are edge_labels[1:-1]
         joins = self.edge_labels[1:-1] if len(self.edge_labels) >= 2 else []
         parts: list[str] = [inner[0]]
-        for i, wpt in enumerate(inner[1:]):
-            edge = joins[i] if i < len(joins) else "DCT"
-            parts.append(edge)
-            parts.append(wpt)
-        return " ".join(parts)
+        i = 0
+        while i < len(joins):
+            edge = joins[i] or "DCT"
+            if edge != "DCT":
+                j = i
+                while j + 1 < len(joins) and joins[j + 1] == edge:
+                    j += 1
+                parts.append(edge)
+                parts.append(inner[j + 1])
+                i = j + 1
+            else:
+                parts.append("DCT")
+                parts.append(inner[i + 1])
+                i += 1
+        while len(parts) > 1 and parts[0] == "DCT":
+            parts.pop(0)
+        while len(parts) > 1 and parts[-1] == "DCT":
+            parts.pop()
+        return " ".join(parts) if parts else "DCT"
 
 
 def _airport_point(icao: str) -> tuple[str, float, float] | None:
