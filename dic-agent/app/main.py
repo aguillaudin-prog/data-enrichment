@@ -316,13 +316,10 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                     )
                 if sug.waypoints and sug.distance_nm > 0:
                     enroute = sug.route_text
+                    include_procs = st.session_state.get(f"{kprefix}_inc_procs", True)
                     full_route = enroute
                     extras: list[str] = []
-                    if sid_pick:
-                        # Explicit format <SID_name> <SID_exit> <enroute>: avoids
-                        # RocketRoute / IFPS parsing the first enroute token as
-                        # a SID transition. The exit fix is the unambiguous
-                        # transition identifier.
+                    if sid_pick and include_procs:
                         exit_fix = sid_pick["connecting_fix"]
                         if enroute and not enroute.split()[0].upper() == exit_fix.upper():
                             full_route = f"{sid_pick['proc_name']} {exit_fix} {enroute}".strip()
@@ -332,7 +329,11 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                             f"SID **{sid_pick['proc_name']}** "
                             f"(rwy {sid_pick['runways_csv'] or '-'} → {exit_fix})"
                         )
-                    if star_pick:
+                    elif sid_pick:
+                        extras.append(
+                            f"SID candidat (non inclus) : **{sid_pick['proc_name']}** → {sid_pick['connecting_fix']}"
+                        )
+                    if star_pick and include_procs:
                         entry_fix = star_pick["connecting_fix"]
                         tokens = full_route.split()
                         if tokens and tokens[-1].upper() != entry_fix.upper():
@@ -342,6 +343,10 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                         extras.append(
                             f"STAR **{star_pick['proc_name']}** "
                             f"({entry_fix} → rwy {star_pick['runways_csv'] or '-'})"
+                        )
+                    elif star_pick:
+                        extras.append(
+                            f"STAR candidate (non incluse) : **{star_pick['proc_name']}** ← {star_pick['connecting_fix']}"
                         )
                     st.session_state[f"_pending_route_{sid}_{idx}"] = full_route
                     msg = (
@@ -354,6 +359,19 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                     st.rerun()
                 else:
                     st.error("Pas de route trouvée — vérifie les ICAO d'origine/destination.")
+
+    st.checkbox(
+        "Inclure SID/STAR auto dans la route",
+        value=leg.get("include_procedures", True),
+        key=f"{kprefix}_inc_procs",
+        help=(
+            "Active : Suggérer ajoute SID + STAR à la route. "
+            "Désactive si ton validateur (RocketRoute, IFPS, autorouter) "
+            "rejette ces procédures pour ce terrain (couverture commerciale "
+            "incomplète sur certains airports) — la route devient enroute "
+            "seul, généralement validée."
+        ),
+    )
 
     msg = st.session_state.pop(f"_pending_suggest_msg_{sid}_{idx}", None)
     if msg:
@@ -417,6 +435,7 @@ def _leg_editor(idx: int, leg: dict) -> dict:
         "eobt_time": t,
         "eobt": eobt,
         "route_text": route_text,
+        "include_procedures": st.session_state.get(f"{kprefix}_inc_procs", True),
     }
 
 
