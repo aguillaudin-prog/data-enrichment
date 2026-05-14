@@ -270,25 +270,20 @@ def _build_corridor_graph(origin, destination, corridor_nm: float, k: int):
 
 # ─── Public entry point ────────────────────────────────────────────────────────
 
-def suggest_route(
-    origin_icao: str,
-    destination_icao: str,
+def _suggest_between_labeled_points(
+    o_label: str, o_pt: tuple[float, float],
+    d_label: str, d_pt: tuple[float, float],
     corridor_nm: float = 100.0,
     k_neighbours: int = 8,
     airspace_penalties: list[dict] | None = None,
     fl: int | None = None,
 ) -> SuggestedRoute:
+    """A* + cleanup between two labeled (lat, lon) points.
+
+    Shared backend for `suggest_route` (airport-to-airport) and
+    `suggest_with_procedures` (SID-exit-to-STAR-entry re-route).
+    """
     warnings: list[str] = []
-    origin = _airport_point(origin_icao)
-    if not origin:
-        return SuggestedRoute(origin_icao, destination_icao, [], [], 0.0, 0, "dct",
-                              [f"Origin '{origin_icao}' not in airport DB."])
-    destination = _airport_point(destination_icao)
-    if not destination:
-        return SuggestedRoute(origin_icao, destination_icao, [], [], 0.0, 0, "dct",
-                              [f"Destination '{destination_icao}' not in airport DB."])
-    o_pt = (origin[1], origin[2])
-    d_pt = (destination[1], destination[2])
 
     geoms: list[tuple] = []
     if airspace_penalties:
@@ -314,32 +309,31 @@ def suggest_route(
     has_airways = db.count_airway_segments() > 0
     if has_airways:
         nodes, adj = _build_airway_graph(o_pt, d_pt, bbox_margin_nm=max(150, corridor_nm * 1.5), fl=fl)
-        _connect_airport_to_graph(origin_icao, o_pt, nodes, adj, k=k_neighbours)
-        _connect_airport_to_graph(destination_icao, d_pt, nodes, adj, k=k_neighbours)
+        _connect_airport_to_graph(o_label, o_pt, nodes, adj, k=k_neighbours)
+        _connect_airport_to_graph(d_label, d_pt, nodes, adj, k=k_neighbours)
         path, edges, dist, explored = _astar_labeled(
-            nodes, adj, origin_icao, destination_icao,
+            nodes, adj, o_label, d_label,
             edge_cost_fn=lambda u, v, b: _edge_cost(u, v, b, nodes),
         )
         strategy = "airway"
     else:
         warnings.append("Pas de base d'airways IFR (lance `python -m app.import_xplane_navdata`). Fallback DCT.")
-        nodes, adj = _build_corridor_graph(origin, destination, corridor_nm, k_neighbours)
+        nodes, adj = _build_corridor_graph(
+            (o_label, o_pt[0], o_pt[1]), (d_label, d_pt[0], d_pt[1]),
+            corridor_nm, k_neighbours,
+        )
         path, edges, dist, explored = _astar_labeled(
-            nodes, adj, origin_icao, destination_icao,
+            nodes, adj, o_label, d_label,
             edge_cost_fn=lambda u, v, b: _edge_cost(u, v, b, nodes),
         )
         strategy = "dct"
 
     if not path:
         warnings.append("A* sans solution — fallback DCT direct.")
-        path = [origin_icao, destination_icao]
+        path = [o_label, d_label]
         edges = ["DCT"]
         dist = _great_circle_nm(o_pt, d_pt)
 
-    # Cleanup: drop intermediate waypoints collocated with endpoints, with
-    # 1-2 letter idents (airway-name collision), or too close to the previous
-    # kept point. Rebuild edges consistently from the original A* labels:
-    # an edge linking two NON-adjacent kept positions is downgraded to DCT.
     if len(path) > 2:
         keep_inner: list[int] = []
         for i in range(1, len(path) - 1):
@@ -351,7 +345,7 @@ def suggest_route(
                 continue
             if _great_circle_nm(p, o_pt) < 15.0 or _great_circle_nm(p, d_pt) < 15.0:
                 continue
-            last_kept = keep_inner[-1] if keep_inner else 0  # 0 = origin
+            last_kept = keep_inner[-1] if keep_inner else 0
             last_p = nodes.get(path[last_kept])
             if last_p and _great_circle_nm(p, last_p) < 10.0:
                 continue
@@ -365,15 +359,116 @@ def suggest_route(
             if b == a + 1:
                 new_edges.append(edges[a] if a < len(edges) else "DCT")
             else:
-                new_edges.append("DCT")  # skipped intermediates → unknown link
+                new_edges.append("DCT")
         path, edges = new_path, new_edges
 
     return SuggestedRoute(
-        origin=origin_icao, destination=destination_icao,
+        origin=o_label, destination=d_label,
         waypoints=path, edge_labels=edges,
         distance_nm=dist, nodes_explored=explored,
         strategy=strategy, warnings=warnings,
     )
+
+
+def suggest_route(
+    origin_icao: str,
+    destination_icao: str,
+    corridor_nm: float = 100.0,
+    k_neighbours: int = 8,
+    airspace_penalties: list[dict] | None = None,
+    fl: int | None = None,
+) -> SuggestedRoute:
+    origin = _airport_point(origin_icao)
+    if not origin:
+        return SuggestedRoute(origin_icao, destination_icao, [], [], 0.0, 0, "dct",
+                              [f"Origin '{origin_icao}' not in airport DB."])
+    destination = _airport_point(destination_icao)
+    if not destination:
+        return SuggestedRoute(origin_icao, destination_icao, [], [], 0.0, 0, "dct",
+                              [f"Destination '{destination_icao}' not in airport DB."])
+    return _suggest_between_labeled_points(
+        origin_icao, (origin[1], origin[2]),
+        destination_icao, (destination[1], destination[2]),
+        corridor_nm=corridor_nm, k_neighbours=k_neighbours,
+        airspace_penalties=airspace_penalties, fl=fl,
+    )
+
+
+def suggest_with_procedures(
+    origin_icao: str,
+    destination_icao: str,
+    fl: int | None = None,
+    min_runway_ft: int | None = None,
+    corridor_nm: float = 100.0,
+    k_neighbours: int = 8,
+    airspace_penalties: list[dict] | None = None,
+) -> tuple[SuggestedRoute, dict | None, dict | None]:
+    """Full IFR route with auto-picked SID/STAR that chain correctly.
+
+    The naive approach (run A* airport-to-airport, then auto-pick SIDs/STARs
+    that *contain* the first/last enroute fix) produces routes like
+    ``MAMES6N DIVKO …`` where RocketRoute rejects the SID/transition combo:
+    MAMES6N's published exit is MAMES, not DIVKO.
+
+    This function does it correctly:
+
+      1. Run airport-to-airport A* to get an approximate enroute direction
+         and identify the first/last natural enroute fix.
+      2. Pick the best SID at origin and STAR at destination.
+      3. **Re-run A* from SID exit fix to STAR entry fix** (or to airport
+         if no SID/STAR was picked). This produces an enroute that joins
+         the SID's published exit and the STAR's published entry, which is
+         the format RocketRoute / IFPS expect.
+
+    Returns (SuggestedRoute, sid_dict|None, star_dict|None). The
+    SuggestedRoute's route_text now drops the SID exit and STAR entry
+    fixes (implicit from the SID/STAR names), so callers should assemble
+    the final FPL route as ``<SID_name> <route_text> <STAR_name>``.
+    """
+    sug = suggest_route(
+        origin_icao, destination_icao, corridor_nm=corridor_nm,
+        k_neighbours=k_neighbours, airspace_penalties=airspace_penalties, fl=fl,
+    )
+    if not sug.waypoints or sug.distance_nm == 0:
+        return sug, None, None
+
+    enroute_tokens = [t for t in sug.route_text.split() if t and t != "DCT"]
+    first_fix = enroute_tokens[0] if enroute_tokens else None
+    last_fix = enroute_tokens[-1] if enroute_tokens else None
+    sid = pick_procedure(origin_icao, first_fix, "SID", min_runway_ft=min_runway_ft)
+    star = pick_procedure(destination_icao, last_fix, "STAR", min_runway_ft=min_runway_ft)
+
+    o = _airport_point(origin_icao)
+    d = _airport_point(destination_icao)
+    new_o_label = origin_icao
+    new_o_pt = (o[1], o[2])
+    new_d_label = destination_icao
+    new_d_pt = (d[1], d[2])
+
+    rerouted = False
+    if sid:
+        wp = db.find_waypoint(sid["connecting_fix"])
+        if wp:
+            new_o_label = sid["connecting_fix"]
+            new_o_pt = (wp["lat"], wp["lon"])
+            rerouted = True
+    if star:
+        wp = db.find_waypoint(star["connecting_fix"])
+        if wp:
+            new_d_label = star["connecting_fix"]
+            new_d_pt = (wp["lat"], wp["lon"])
+            rerouted = True
+
+    if rerouted:
+        sug2 = _suggest_between_labeled_points(
+            new_o_label, new_o_pt, new_d_label, new_d_pt,
+            corridor_nm=corridor_nm, k_neighbours=k_neighbours,
+            airspace_penalties=airspace_penalties, fl=fl,
+        )
+        if sug2.waypoints and sug2.distance_nm > 0:
+            sug = sug2
+
+    return sug, sid, star
 
 
 def _expand_truncated_proc_name(proc_name: str, waypoints: list[str]) -> str:

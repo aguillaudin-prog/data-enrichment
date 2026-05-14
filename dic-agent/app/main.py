@@ -309,16 +309,13 @@ def _leg_editor(idx: int, leg: dict) -> dict:
         st.write("")
         if st.button("✨ Suggérer", key=f"{kprefix}_suggest", help="A* sur les NAVAID dans le corridor"):
             if origin and destination:
+                min_rwy = int(ac_perf["min_runway_ft"]) if (ac_perf and ac_perf["min_runway_ft"]) else None
                 with st.spinner("Calcul A*…"):
-                    sug = route_suggester.suggest_route(origin, destination)
+                    sug, sid_pick, star_pick = route_suggester.suggest_with_procedures(
+                        origin, destination, fl=int(fl), min_runway_ft=min_rwy,
+                    )
                 if sug.waypoints and sug.distance_nm > 0:
                     enroute = sug.route_text
-                    enroute_tokens = [t for t in enroute.split() if t and t != "DCT"]
-                    first_fix = enroute_tokens[0] if enroute_tokens else None
-                    last_fix = enroute_tokens[-1] if enroute_tokens else None
-                    min_rwy = int(ac_perf["min_runway_ft"]) if (ac_perf and ac_perf["min_runway_ft"]) else None
-                    sid_pick = route_suggester.pick_procedure(origin, first_fix, "SID", min_runway_ft=min_rwy)
-                    star_pick = route_suggester.pick_procedure(destination, last_fix, "STAR", min_runway_ft=min_rwy)
                     full_route = enroute
                     extras: list[str] = []
                     if sid_pick:
