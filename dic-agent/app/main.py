@@ -573,7 +573,7 @@ def _render_briefing_section(*, legs: list[dict]) -> None:
 
     bc1, bc2 = st.columns([3, 1])
     with bc1:
-        st.markdown("### 🌤️ Briefing météo & NOTAMs")
+        st.markdown("**METAR / TAF / NOTAMs**")
         st.caption(
             f"Aérodromes : {', '.join(icaos)}  ·  "
             f"Fenêtre NOTAM : {dt.datetime.utcfromtimestamp(start_ts):%Y-%m-%d %H:%MZ} → "
@@ -1010,6 +1010,27 @@ PAGES = [
 
 def _goto_page(idx: int) -> None:
     st.session_state.page_idx = max(0, min(idx, len(PAGES) - 1))
+    # Drapeau lu en haut du rendu pour réinitialiser le scroll. Streamlit
+    # préserve le scroll entre les reruns, donc on injecte un JS one-shot.
+    st.session_state._scroll_top = True
+
+
+def _scroll_to_top_if_needed() -> None:
+    """Inject a one-shot scroll-to-top when a page change just happened.
+    Sans ça, passer de Legs → Preview laisse la fenêtre tout en bas, ce
+    qui désoriente l'utilisateur."""
+    if not st.session_state.pop("_scroll_top", False):
+        return
+    import streamlit.components.v1 as components
+    components.html(
+        "<script>"
+        "  const doc = window.parent.document;"
+        "  doc.documentElement.scrollTo({top: 0, behavior: 'instant'});"
+        "  const main = doc.querySelector('section.main');"
+        "  if (main) main.scrollTo({top: 0, behavior: 'instant'});"
+        "</script>",
+        height=0,
+    )
 
 
 _mission_done = bool((st.session_state.get("mission") or {}).get("registration"))
@@ -1074,6 +1095,7 @@ for i, (num, title, _sub) in enumerate(PAGES):
             _goto_page(i)
             st.rerun()
 
+_scroll_to_top_if_needed()
 st.markdown(f"### {PAGES[page_idx][0]} {PAGES[page_idx][1]}")
 st.caption(PAGES[page_idx][2])
 st.divider()
@@ -1395,6 +1417,8 @@ if page_idx == 2:
     # set it here so the generator's _format_date_of_flight always wins.
 
     st.divider()
+    st.markdown("### 📑 Documents finaux")
+    st.caption("À transmettre aux autorités hôtes (DIC) et au plan de vol (FPL).")
     bc1, bc2 = st.columns(2)
     with bc1:
         if st.button("📄 Générer DIC .docx", type="primary"):
@@ -1520,6 +1544,11 @@ if page_idx == 2:
             )
 
     st.divider()
+    st.markdown("### 🌤️ Briefing (météo, NOTAM, GRAMET, pack PDF)")
+    st.caption(
+        "Données opérationnelles via autorouter.aero. Aucun appel n'est "
+        "effectué tant que tu ne cliques pas sur 'Charger'."
+    )
     _render_briefing_section(legs=st.session_state.legs)
 
     _step_nav_footer()
