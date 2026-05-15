@@ -518,6 +518,119 @@ def _render_dual_suggest(*, sid_key: str, idx: int, kprefix: str) -> None:
         st.rerun()
 
 
+def _render_briefing_section(*, legs: list[dict]) -> None:
+    """Briefing météo (METAR/TAF) + NOTAMs pour tous les aérodromes de la
+    mission. Affiché en page Preview, derrière un bouton unique pour ne pas
+    saturer le réseau à chaque rerun.
+
+    Les résultats sont mis en cache dans st.session_state (clé _briefing_*)
+    et invalidés dès qu'un aérodrome change — l'utilisateur peut forcer le
+    rafraîchissement via le bouton "🔄 Rafraîchir".
+    """
+    from app import autorouter_client
+
+    icaos: list[str] = []
+    for leg in legs:
+        for k in ("origin", "destination", "alternate"):
+            v = (leg.get(k) or "").strip().upper()
+            if v and v not in icaos:
+                icaos.append(v)
+    if not icaos:
+        return
+
+    ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
+
+    # Fenêtre de validité : du plus tôt EOBT au plus tard EOBT + 24 h.
+    times: list[dt.datetime] = []
+    for leg in legs:
+        eobt = leg.get("eobt")
+        if isinstance(eobt, dt.datetime):
+            times.append(eobt)
+    start_ts = int(min(times).timestamp()) if times else int(dt.datetime.utcnow().timestamp())
+    end_ts = int((max(times) + dt.timedelta(hours=24)).timestamp()) if times else start_ts + 86400
+
+    sig = f"{','.join(icaos)}|{start_ts}|{end_ts}"
+    cached_sig_key = "_briefing_sig"
+    cached_data_key = "_briefing_data"
+    have_cache = st.session_state.get(cached_sig_key) == sig
+
+    bc1, bc2 = st.columns([3, 1])
+    with bc1:
+        st.markdown("### 🌤️ Briefing météo & NOTAMs")
+        st.caption(
+            f"Aérodromes : {', '.join(icaos)}  ·  "
+            f"Fenêtre NOTAM : {dt.datetime.utcfromtimestamp(start_ts):%Y-%m-%d %H:%MZ} → "
+            f"{dt.datetime.utcfromtimestamp(end_ts):%Y-%m-%d %H:%MZ}"
+        )
+    with bc2:
+        st.write("")
+        label = "🔄 Rafraîchir" if have_cache else "🌤️ Charger"
+        if st.button(label, key="briefing_fetch", use_container_width=True):
+            if not ar_cfg.is_configured():
+                st.error("Autorouter pas configuré (voir page ⚙ Admin).")
+            else:
+                with st.spinner("Météo (parallèle) + NOTAMs…"):
+                    wx = autorouter_client.fetch_metartaf_batch(ar_cfg, icaos)
+                    notams = autorouter_client.fetch_notams(
+                        ar_cfg, icaos,
+                        startvalidity=start_ts, endvalidity=end_ts,
+                    )
+                st.session_state[cached_sig_key] = sig
+                st.session_state[cached_data_key] = {"wx": wx, "notams": notams}
+                st.rerun()
+
+    if not have_cache:
+        st.info("Clique sur **🌤️ Charger** pour récupérer METAR/TAF et NOTAMs depuis autorouter.")
+        return
+
+    data = st.session_state.get(cached_data_key) or {}
+    wx: dict = data.get("wx") or {}
+    notams: list = data.get("notams") or []
+
+    # NOTAMs groupés par premier ICAO de l'itema.
+    notams_by_icao: dict[str, list] = {ic: [] for ic in icaos}
+    for n in notams:
+        for ic in n.itema:
+            ic_u = ic.strip().upper()
+            if ic_u in notams_by_icao:
+                notams_by_icao[ic_u].append(n)
+
+    for ic in icaos:
+        ap = db.find_airport(ic)
+        title_extras = f" · {ap['name']}" if ap else ""
+        n_notams = len(notams_by_icao.get(ic, []))
+        label = f"**{ic}**{title_extras}  ·  {n_notams} NOTAM(s)"
+        with st.expander(label, expanded=False):
+            mt = wx.get(ic)
+            if mt is None:
+                st.caption("METAR/TAF : non chargé.")
+            elif mt.error:
+                st.caption(f"METAR/TAF : _{mt.error}_")
+            else:
+                if mt.metar:
+                    st.markdown("**METAR**")
+                    st.code(mt.metar, language="text")
+                else:
+                    st.caption("Pas de METAR.")
+                if mt.taf:
+                    st.markdown("**TAF**")
+                    st.code(mt.taf, language="text")
+                else:
+                    st.caption("Pas de TAF.")
+
+            ns = notams_by_icao.get(ic, [])
+            if ns:
+                st.markdown("**NOTAMs**")
+                for n in ns:
+                    st.code(autorouter_client.format_notam(n), language="text")
+            else:
+                st.caption(
+                    "Aucun NOTAM dans la fenêtre. "
+                    "_(Note : autorouter ne couvre que la zone Eurocontrol EAD — "
+                    "les aérodromes hors Europe peuvent rester vides.)_"
+                )
+
+
 def _leg_editor(idx: int, leg: dict) -> dict:
     sid = _legs_sid()
     kprefix = f"leg_s{sid}_{idx}"
@@ -1253,6 +1366,9 @@ if page_idx == 2:
                 file_name="FPL_" + (mission.get("registration") or "mission").replace("/", "-") + ".txt",
                 mime="text/plain",
             )
+
+    st.divider()
+    _render_briefing_section(legs=st.session_state.legs)
 
     _step_nav_footer()
 

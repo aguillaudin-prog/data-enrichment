@@ -22,7 +22,9 @@ Configuration is read from st.secrets under [autorouter]:
 """
 from __future__ import annotations
 
+import json as _json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -451,3 +453,199 @@ def _normalise_solution(
         raw_solution=solution,
         log_messages=logs,
     )
+
+
+# ─── Weather & NOTAMs ──────────────────────────────────────────────────────────
+
+@dataclass
+class MetarTaf:
+    icao: str = ""
+    metar: str = ""
+    taf: str = ""
+    error: str = ""
+
+
+def fetch_metartaf(cfg: AutorouterConfig, icao: str) -> MetarTaf:
+    """GET /met/metartaf/<icao> — returns latest METAR + TAF or empty fields.
+
+    Per the wiki, individual fields are null when unavailable. We squash to
+    empty strings so the UI can show '—' uniformly.
+    """
+    icao = (icao or "").strip().upper()
+    if not icao:
+        return MetarTaf(error="missing ICAO")
+    if not cfg.is_configured():
+        return MetarTaf(icao=icao, error="autorouter not configured")
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/met/metartaf/{icao}",
+            headers=_auth_headers(cfg), timeout=20,
+        )
+    except requests.exceptions.RequestException as e:
+        return MetarTaf(icao=icao, error=f"network: {e}")
+    if resp.status_code == 404:
+        return MetarTaf(icao=icao, error="no METAR/TAF for this station")
+    if resp.status_code != 200:
+        return MetarTaf(icao=icao, error=f"HTTP {resp.status_code}")
+    try:
+        data = resp.json()
+    except ValueError:
+        return MetarTaf(icao=icao, error="invalid JSON response")
+    return MetarTaf(
+        icao=icao,
+        metar=(data.get("metar") or "").strip(),
+        taf=(data.get("taf") or "").strip(),
+    )
+
+
+def fetch_metartaf_batch(cfg: AutorouterConfig, icaos: list[str]) -> dict[str, MetarTaf]:
+    """Parallel METAR/TAF fetch (one HTTP call per ICAO, 5 workers).
+
+    Skips user-added FOB airports (no METAR/TAF published). The autorouter
+    endpoint is per-station so we parallelise to keep total latency under
+    ~3 s for 6-8 airports.
+    """
+    targets = []
+    skipped: dict[str, MetarTaf] = {}
+    for ic in icaos:
+        ic_u = (ic or "").strip().upper()
+        if not ic_u or ic_u in skipped or any(t == ic_u for t in targets):
+            continue
+        ap = db.find_airport(ic_u)
+        if ap:
+            try:
+                if ap["user_added"]:
+                    skipped[ic_u] = MetarTaf(icao=ic_u, error="aérodrome non-publié (pas de METAR/TAF)")
+                    continue
+            except (KeyError, IndexError):
+                pass
+        targets.append(ic_u)
+
+    results: dict[str, MetarTaf] = dict(skipped)
+    if not targets:
+        return results
+    with ThreadPoolExecutor(max_workers=min(5, len(targets))) as ex:
+        for mt in ex.map(lambda ic: fetch_metartaf(cfg, ic), targets):
+            results[mt.icao] = mt
+    return results
+
+
+@dataclass
+class NotamRow:
+    """Decoded subset of an autorouter NOTAM row. The full row is kept in
+    `raw` for any consumer that wants the Garmin-format coords etc."""
+    id: int = 0
+    series: str = ""
+    number: int = 0
+    year: int = 0
+    itema: list[str] = field(default_factory=list)
+    iteme: str = ""           # the human-readable body
+    itemd: str | None = None  # schedule, may be null
+    itemf: str | None = None  # lower limit text
+    itemg: str | None = None  # upper limit text
+    fir: str = ""
+    startvalidity: int = 0
+    endvalidity: int = 0
+    traffic: str = ""
+    purpose: str = ""
+    scope: str = ""
+    type: str = ""
+    raw: dict = field(default_factory=dict)
+
+    @property
+    def notam_id(self) -> str:
+        return f"{self.series}{self.number:04d}/{self.year:02d}" if self.number else f"#{self.id}"
+
+
+def _decode_notam_row(row: dict) -> NotamRow:
+    return NotamRow(
+        id=int(row.get("id") or 0),
+        series=(row.get("series") or "").strip(),
+        number=int(row.get("number") or 0),
+        year=int(row.get("year") or 0),
+        itema=list(row.get("itema") or []),
+        iteme=(row.get("iteme") or "").strip(),
+        itemd=row.get("itemd"),
+        itemf=row.get("itemf"),
+        itemg=row.get("itemg"),
+        fir=(row.get("fir") or "").strip(),
+        startvalidity=int(row.get("startvalidity") or 0),
+        endvalidity=int(row.get("endvalidity") or 0),
+        traffic=(row.get("traffic") or "").strip(),
+        purpose=(row.get("purpose") or "").strip(),
+        scope=(row.get("scope") or "").strip(),
+        type=(row.get("type") or "").strip(),
+        raw=row,
+    )
+
+
+def fetch_notams(
+    cfg: AutorouterConfig,
+    icaos: list[str],
+    *,
+    startvalidity: int | None = None,
+    endvalidity: int | None = None,
+    limit: int = 100,
+) -> list[NotamRow]:
+    """GET /notam?itemas=[...]&… — fetches NOTAMs valid for the given
+    ICAO list inside the [startvalidity, endvalidity] window (Unix seconds).
+
+    The autorouter NOTAM DB is European/Eurocontrol-EAD only. For West
+    Africa (DI/DR/DN/DX) the response will be empty — we surface that
+    explicitly to the user instead of silently dropping it.
+    """
+    items = [(ic or "").strip().upper() for ic in icaos if (ic or "").strip()]
+    items = sorted(set(items))
+    if not items:
+        return []
+    if not cfg.is_configured():
+        return []
+    params: dict[str, Any] = {
+        "itemas": _json.dumps(items),
+        "offset": 0,
+        "limit": max(1, min(int(limit), 100)),
+    }
+    if startvalidity is not None:
+        params["startvalidity"] = int(startvalidity)
+    if endvalidity is not None:
+        params["endvalidity"] = int(endvalidity)
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/notam",
+            params=params, headers=_auth_headers(cfg), timeout=30,
+        )
+    except requests.exceptions.RequestException:
+        return []
+    if resp.status_code != 200:
+        return []
+    try:
+        data = resp.json()
+    except ValueError:
+        return []
+    rows = data.get("rows") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
+    return [_decode_notam_row(r) for r in rows if isinstance(r, dict)]
+
+
+def format_notam(n: NotamRow) -> str:
+    """Render a NOTAM as the standard ICAO Q-line + A/B/C/E format."""
+    import datetime as _dt
+    def _fmt_ts(ts: int) -> str:
+        try:
+            return _dt.datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+        except (OverflowError, OSError, ValueError):
+            return "—"
+    lines = [f"{n.notam_id} NOTAM"]
+    if n.itema:
+        lines.append(f"A) {' '.join(n.itema)}")
+    lines.append(f"B) {_fmt_ts(n.startvalidity)}  C) {_fmt_ts(n.endvalidity)}")
+    if n.itemd:
+        lines.append(f"D) {n.itemd}")
+    if n.iteme:
+        lines.append(f"E) {n.iteme}")
+    if n.itemf:
+        lines.append(f"F) {n.itemf}")
+    if n.itemg:
+        lines.append(f"G) {n.itemg}")
+    return "\n".join(lines)
