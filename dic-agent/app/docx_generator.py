@@ -162,19 +162,36 @@ def _build_dic(mission: dict, leg_data: list[dict]) -> bytes:
     section.left_margin = Cm(1.5)
     section.right_margin = Cm(1.5)
 
-    # ── Title ─────────────────────────────────────────────────────────
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run("OVERFLIGHT REQUEST")
+    # ── Title block ───────────────────────────────────────────────────
+    # Two centred lines, matching the reference DIC header.
+    p1 = doc.add_paragraph()
+    p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p1.add_run("ANNEX A")
+    r.bold = True
+    r.font.size = Pt(11)
+    p2 = doc.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p2.add_run("FRA DIPLOMATIC CLEARANCE (DIC) FORM")
     r.bold = True
     r.font.size = Pt(14)
 
-    # ── (1) Reference / (2) Amendment ────────────────────────────────
-    t = doc.add_table(rows=0, cols=2)
+    # ── (1) Reference + (2) Amendment on a SINGLE row of 4 cells,
+    # then a second row for the Mission number — matches the reference
+    # header layout exactly.
+    t = doc.add_table(rows=0, cols=4)
     t.style = "Table Grid"
-    _kv_row(t, "(1) Reference number", mission.get("reference", ""))
-    _kv_row(t, "(2) Amendment number", mission.get("amendment", "V1"))
-    _set_widths(t, [5, 12])
+    r1 = t.add_row()
+    _bold(r1.cells[0], "(1) Reference number :")
+    _plain(r1.cells[1], mission.get("reference", ""))
+    _bold(r1.cells[2], "(2) Amendment number :")
+    _plain(r1.cells[3], mission.get("amendment", "V1"))
+    r2 = t.add_row()
+    _bold(r2.cells[0], "Mission number :")
+    mc = r2.cells[1]
+    mc.merge(r2.cells[2])
+    mc.merge(r2.cells[3])
+    _plain(mc, mission.get("mission_number", ""))
+    _set_widths(t, [4.5, 4.5, 4.5, 4.5])
     doc.add_paragraph()
 
     # ── State summary table per leg (no VIP column, per reference) ───
@@ -278,37 +295,67 @@ def _build_dic(mission: dict, leg_data: list[dict]) -> bytes:
     _info("(33)", "E-mail", mission.get("poc_email_functional", ""))
     _info("(34)", "Fax", mission.get("poc_fax", ""))
 
-    # Reserved for issuing state (35..36) — empty placeholders
+    # Reserved for issuing state (35..36) + stamp/date/signature rows —
+    # empty placeholders that the receiving authority fills in.
     _section("RESERVED FOR ISSUING STATE")
     _info("(35)", "STATE ISSUING", "")
     _info("(36)", "DIPLOMATIC CLEARANCE NUMBER & VALIDITY", "")
 
     _set_widths(info_tbl, [1.5, 6, 9.5])
+    doc.add_paragraph()
+
+    stamp_tbl = doc.add_table(rows=0, cols=2)
+    stamp_tbl.style = "Table Grid"
+    r1 = stamp_tbl.add_row()
+    _bold(r1.cells[0], "Stamp issuing state :")
+    _bold(r1.cells[1], "Date :")
+    r2 = stamp_tbl.add_row()
+    _plain(r2.cells[0], "")
+    _plain(r2.cells[1], "")
+    r3 = stamp_tbl.add_row()
+    _bold(r3.cells[0], "Signature :")
+    sc = r3.cells[0]
+    sc.merge(r3.cells[1])
+    _set_widths(stamp_tbl, [8.5, 8.5])
 
     doc.add_page_break()
 
     # ── Appendix 1 — Detailed itinerary per leg ──────────────────────
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run("APPENDIX 1 — DETAILED ITINERARY")
+    r = p.add_run("ANNEX A, APPENDIX 1")
     r.bold = True
     r.font.size = Pt(12)
+    p2 = doc.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p2.add_run("DETAILED ITINERARY")
+    r.bold = True
+    r.font.size = Pt(11)
+
+    callsign_for_legs = mission.get("callsign", "")
 
     for li, leg in enumerate(leg_data, start=1):
         head = doc.add_paragraph()
-        run = head.add_run(
-            f"LEG {li}  {leg.get('origin','')} → {leg.get('destination','')}"
+        leg_label = (
+            f"Leg {li}    "
+            f"{leg.get('origin','')} → {leg.get('destination','')}    "
+            f"Callsign : {callsign_for_legs}"
         )
+        run = head.add_run(leg_label)
         run.bold = True
         run.font.size = Pt(10)
 
-        leg_tbl = doc.add_table(rows=0, cols=4)
+        # 6-column itinerary table: State | Entry | Route | Exit | FL | TAS
+        # Matches reference Appendix 1 header (39)..(44).
+        leg_tbl = doc.add_table(rows=0, cols=6)
         leg_tbl.style = "Table Grid"
         hdr = leg_tbl.add_row()
-        _bold(hdr.cells[0], "(37) State")
-        _bold(hdr.cells[1], "(38) Entry point and timing or airfield + ETD\n(DD MMM YY, HHMM Z)")
-        _bold(hdr.cells[2], "(39) Route over territory")
-        _bold(hdr.cells[3], "(40) Exit point and timing or airfield + ETA\n(DD MMM YY, HHMM Z)")
+        _bold(hdr.cells[0], "(39) State")
+        _bold(hdr.cells[1], "(40) Entry point and timing or airfield + EOBT")
+        _bold(hdr.cells[2], "(41) Route over Territory")
+        _bold(hdr.cells[3], "(42) Exit point and timing or airfield + EIBT")
+        _bold(hdr.cells[4], "(43) FL")
+        _bold(hdr.cells[5], "(44) TAS")
         for c in hdr.cells:
             _set_cell_bg(c, "BFBFBF")
         for seg in leg["segments"]:
@@ -317,6 +364,8 @@ def _build_dic(mission: dict, leg_data: list[dict]) -> bytes:
             _plain(row.cells[1], f"{seg['entry_label']}\n{seg['entry_time_str']}")
             _plain(row.cells[2], seg["route_in_country"])
             _plain(row.cells[3], f"{seg['exit_label']}\n{seg['exit_time_str']}")
+            _plain(row.cells[4], str(seg.get("fl") or ""))
+            _plain(row.cells[5], str(seg.get("tas") or ""))
 
         # IN CASE OF EMERGENCY — diversion to the alternate.
         # Reference layout (4 columns, italicised):
@@ -331,9 +380,8 @@ def _build_dic(mission: dict, leg_data: list[dict]) -> bytes:
             for c in label_row.cells:
                 _set_cell_bg(c, "FFF2CC")
             label_cell = label_row.cells[0]
-            label_cell.merge(label_row.cells[1])
-            label_cell.merge(label_row.cells[2])
-            label_cell.merge(label_row.cells[3])
+            for ci in range(1, 6):
+                label_cell.merge(label_row.cells[ci])
             _bold(label_cell, "IN CASE OF EMERGENCY")
 
             alt_ap = db.find_airport(alt)
@@ -341,12 +389,14 @@ def _build_dic(mission: dict, leg_data: list[dict]) -> bytes:
                 db.find_country_name(alt_ap["country_iso"])
                 if alt_ap and alt_ap["country_iso"] else ""
             )
-            # Estimate ETA: take the leg's destination ETA from the last
-            # segment exit time and add 30 min for the divert.
             eta_str = ""
+            fl_str = ""
+            tas_str = ""
             if leg.get("segments"):
                 last_seg = leg["segments"][-1]
                 eta_str = last_seg.get("exit_time_str") or ""
+                fl_str = str(last_seg.get("fl") or "")
+                tas_str = str(last_seg.get("tas") or "")
             row = leg_tbl.add_row()
             for c in row.cells:
                 _set_cell_bg(c, "FFF2CC")
@@ -354,7 +404,9 @@ def _build_dic(mission: dict, leg_data: list[dict]) -> bytes:
             _plain(row.cells[1], "")
             _plain(row.cells[2], "DCT")
             _plain(row.cells[3], f"{alt}  {eta_str}".strip())
-        _set_widths(leg_tbl, [3.0, 4.5, 5.5, 4.5])
+            _plain(row.cells[4], fl_str)
+            _plain(row.cells[5], tas_str)
+        _set_widths(leg_tbl, [2.5, 4.0, 4.5, 4.0, 1.0, 1.0])
         doc.add_paragraph()
 
     buf = BytesIO()
