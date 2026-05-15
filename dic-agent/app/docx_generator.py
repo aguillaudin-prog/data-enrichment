@@ -142,17 +142,19 @@ def _format_date_of_flight(eobts: list[dt.datetime]) -> str:
 
 
 def build_dic_document(mission: dict, leg_data: list[dict]) -> bytes:
-    fmt = mission.get("template_format", "FRA")
-    if fmt == "ICAO":
-        return _build_icao_long(mission, leg_data)
-    return _build_fra_short(mission, leg_data)
+    """Render the DIC docx in the unified Annex-A layout that matches the
+    user's reference samples. The 'FRA' vs 'ICAO' distinction the codebase
+    used to carry was retired: every reference DIC follows the same layout,
+    so we ship a single format with the right field numbers, IN CASE OF
+    EMERGENCY rows, etc. The `template_format` key on the mission dict is
+    ignored."""
+    return _build_dic(mission, leg_data)
 
 
-def _build_fra_short(mission: dict, leg_data: list[dict]) -> bytes:
-    """FRA short DIC, structured per the reference samples in
-    sample-outputs/. Layout, field numbers (11..40) and section headers
-    are 1:1 with the user's existing operational documents.
-    """
+def _build_dic(mission: dict, leg_data: list[dict]) -> bytes:
+    """DIC docx, structured 1:1 with the reference samples in sample-outputs/.
+    Layout, field numbers (1..40) and section headers come from the user's
+    actual operational documents."""
     doc = Document()
     section = doc.sections[0]
     section.top_margin = Cm(1.2)
@@ -352,151 +354,6 @@ def _build_fra_short(mission: dict, leg_data: list[dict]) -> bytes:
             _plain(row.cells[1], "")
             _plain(row.cells[2], "DCT")
             _plain(row.cells[3], f"{alt}  {eta_str}".strip())
-        _set_widths(leg_tbl, [3.0, 4.5, 5.5, 4.5])
-        doc.add_paragraph()
-
-    buf = BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
-
-
-def _build_icao_long(mission: dict, leg_data: list[dict]) -> bytes:
-    doc = Document()
-    section = doc.sections[0]
-    section.top_margin = Cm(1.2)
-    section.bottom_margin = Cm(1.2)
-    section.left_margin = Cm(1.5)
-    section.right_margin = Cm(1.5)
-
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run("OVERFLIGHT REQUEST")
-    r.bold = True
-    r.font.size = Pt(14)
-
-    t = doc.add_table(rows=0, cols=2)
-    t.style = "Table Grid"
-    _kv_row(t, "(1) Reference number", mission.get("reference", ""))
-    _kv_row(t, "(2) Amendment number", mission.get("amendment", ""))
-    _set_widths(t, [5, 12])
-
-    doc.add_paragraph()
-
-    state_tbl = doc.add_table(rows=0, cols=9)
-    state_tbl.style = "Table Grid"
-    _header_row(state_tbl, "STATE", "R", "N", "L", "DG", "A", "FR", "EXISTING DIC NUMBER", "LEG")
-    for li, leg in enumerate(leg_data, start=1):
-        for seg in leg["segments"]:
-            row = state_tbl.add_row()
-            _plain(row.cells[0], seg["state_name"])
-            _plain(row.cells[1], "X" if seg.get("R") else "")
-            _plain(row.cells[2], "X" if seg.get("N") else "")
-            _plain(row.cells[3], "X" if seg.get("L") else "")
-            _plain(row.cells[4], "X" if seg.get("DG") else "")
-            _plain(row.cells[5], "X" if seg.get("A") else "")
-            _plain(row.cells[6], seg.get("FR", "I"))
-            _plain(row.cells[7], seg.get("existing_dic", ""))
-            _plain(row.cells[8], f"LEG {li}")
-
-    doc.add_paragraph()
-
-    info_tbl = doc.add_table(rows=0, cols=3)
-    info_tbl.style = "Table Grid"
-    _header_row(info_tbl, "SERIAL", "REQUESTED INFORMATION", "INFORMATION SUBMITTED")
-
-    def _info(serial: str, label: str, value: str) -> None:
-        r = info_tbl.add_row()
-        _plain(r.cells[0], serial)
-        _plain(r.cells[1], label)
-        _plain(r.cells[2], value)
-
-    r = info_tbl.add_row()
-    for c in r.cells:
-        _set_cell_bg(c, "BFBFBF")
-    _bold(r.cells[1], "AIRCRAFT AND CREW")
-
-    _info("(11)", "Requesting state", mission.get("requesting_state", "FRANCE"))
-    _info("(11a)", "Operator", mission.get("operator", ""))
-    _info("(12)", "Number and type of aircraft", mission.get("aircraft_count_type", ""))
-    _info("(13)", "Aircraft registration", mission.get("registration", ""))
-    _info("(14)", "Spare aircraft", mission.get("spare_aircraft", "/"))
-    _info("(15)", "Callsign (including spare if different)", mission.get("callsign", ""))
-    _info("(16)", "Number of crew members", str(mission.get("n_crew", "")))
-    _info("(17)", "Pilot rank and name", mission.get("pilots", ""))
-    _info("(18)", "Photographic sensors and/or cameras", mission.get("sensors", "NO"))
-    _info("(19)", "Armament", mission.get("armament", "NO"))
-    _info("(20)", "Electronic warfare equipment", mission.get("ew", "NO"))
-
-    r = info_tbl.add_row()
-    for c in r.cells:
-        _set_cell_bg(c, "BFBFBF")
-    _bold(r.cells[1], "FLIGHT DETAILS")
-
-    _info("(21)", "Date of flight", mission.get("date_of_flight", ""))
-    _info("(22)", "Purpose of flight", mission.get("purpose", ""))
-    _info("(23)", "Departure airport(s)", mission.get("departure_airport", ""))
-    _info("(24)", "Destination airport(s)", mission.get("destination_airport", ""))
-    _info("(25)", "Alternate airport(s)", mission.get("alternates", ""))
-    _info("(26)", "Radio frequencies", mission.get("radio_frequencies", "V/U/HF"))
-
-    r = info_tbl.add_row()
-    for c in r.cells:
-        _set_cell_bg(c, "BFBFBF")
-    _bold(r.cells[1], "LOAD INFORMATION")
-
-    _info("(27)", "Number of passengers", mission.get("n_passengers", "TBN"))
-    _info("(28)", "VIP title/rank and name", mission.get("vip_title", "NIL"))
-    _info("(29)", "DG details", mission.get("dg_details", "NO DG"))
-
-    r = info_tbl.add_row()
-    for c in r.cells:
-        _set_cell_bg(c, "BFBFBF")
-    _bold(r.cells[1], "POINT OF CONTACT")
-
-    _info("(31)", "Rank, name, first name", mission.get("poc_name", ""))
-    _info("(32)", "Telephone number", mission.get("poc_phone", ""))
-    _info("(33)", "E-mail", mission.get("poc_email_personal", ""))
-    _info("(34)", "Fax", mission.get("poc_fax", ""))
-
-    _set_widths(info_tbl, [1.5, 6, 9.5])
-
-    doc.add_page_break()
-
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run("DETAILED ITINERARY")
-    r.bold = True
-    r.font.size = Pt(12)
-
-    for li, leg in enumerate(leg_data, start=1):
-        head = doc.add_paragraph()
-        run = head.add_run(
-            f"LEG {li}  From {leg.get('origin','')} to {leg.get('destination','')}"
-        )
-        run.bold = True
-        run.font.size = Pt(10)
-
-        leg_tbl = doc.add_table(rows=0, cols=4)
-        leg_tbl.style = "Table Grid"
-        _header_row(
-            leg_tbl,
-            "State",
-            "Entry point and timing or airfield + ETD\n(DD MMM YY, HHMM Z)",
-            "Route over territory",
-            "Exit point and timing or airfield + ETA\n(DD MMM YY, HHMM Z)",
-        )
-        for seg in leg["segments"]:
-            row = leg_tbl.add_row()
-            _plain(row.cells[0], seg["state_name"])
-            _plain(
-                row.cells[1],
-                f"{seg['entry_label']}\n{seg['entry_time_str']}",
-            )
-            _plain(row.cells[2], seg["route_in_country"])
-            _plain(
-                row.cells[3],
-                f"{seg['exit_label']}\n{seg['exit_time_str']}",
-            )
         _set_widths(leg_tbl, [3.0, 4.5, 5.5, 4.5])
         doc.add_paragraph()
 

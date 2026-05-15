@@ -692,9 +692,11 @@ with st.sidebar:
             _goto_page(i)
             st.rerun()
     st.divider()
-    st.subheader("Paramètres globaux")
-    template_format = st.radio("Format DIC", ["FRA", "ICAO"], horizontal=True)
-    st.divider()
+    # FRA/ICAO toggle removed: every reference DIC the user has shipped uses
+    # the same Annex A layout. The single format that matches those samples
+    # is now always used. Kept as a constant so downstream calls (format_zulu)
+    # keep working without an inline string.
+    template_format = "FRA"
     st.caption(
         "Astuce : pour un point de coordonnées brutes, format "
         "`N 9°34'45.56\" / E 3°14'7.09\"` ou `N9 34 45 / E3 14 7`."
@@ -772,18 +774,14 @@ if page_idx == 0:
     poc = _poc_picker("mission")
 
     st.divider()
-    st.subheader("Indicateurs")
-    ic1, ic2, ic3, ic4, ic5 = st.columns(5)
-    with ic1:
-        sensors = "YES" if st.checkbox("Capteurs / caméras") else "NO"
-    with ic2:
-        armament = "YES" if st.checkbox("Armement") else "NO"
-    with ic3:
-        ew = "YES" if st.checkbox("Guerre électronique") else "NO"
-    with ic4:
-        has_vip = st.checkbox("VIP à bord")
-    with ic5:
-        has_dg = st.checkbox("Dangerous Goods")
+    # Indicateurs (sensors / armament / EW / VIP / DG) used to live here as a
+    # five-checkbox row but every reference DIC the user has shipped to date
+    # ticks 'NO' on the three first and 'NIL' on the two last. Removed from
+    # the form — defaults fall through in the docx generator. If a real
+    # operational change is needed, add the checkboxes back here.
+    sensors = "NO"
+    armament = "NO"
+    ew = "NO"
 
     st.subheader("Vol")
     purpose = st.text_input("Purpose of flight", value="LOGISTIC FLIGHT WITHOUT DANGEROUS GOODS")
@@ -791,8 +789,8 @@ if page_idx == 0:
     # airport). We aggregate them at DIC-export time.
     radio_freq = st.text_input("Radio frequencies", value="V/U/HF")
     n_passengers = st.text_input("Number of passengers", value="TBN")
-    vip_title = st.text_input("VIP title/rank and name", value="NIL" if not has_vip else "TBN")
-    dg_details = st.text_input("DG details", value="NIL" if not has_dg else "TBN")
+    vip_title = "NIL"
+    dg_details = "NIL"
     remarks = st.text_area("Remarks", value="")
 
     st.session_state.mission = {
@@ -827,8 +825,6 @@ if page_idx == 0:
         "poc_email_personal": poc.get("email_personal", ""),
         "poc_email_functional": poc.get("email_functional", ""),
         "poc_fax": poc.get("fax", ""),
-        "vip_flag": has_vip,
-        "dg_flag": has_dg,
     }
 
 
