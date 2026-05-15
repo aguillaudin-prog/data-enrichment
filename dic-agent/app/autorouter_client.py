@@ -628,6 +628,39 @@ def fetch_notams(
     return [_decode_notam_row(r) for r in rows if isinstance(r, dict)]
 
 
+def fetch_gramet(
+    cfg: AutorouterConfig, *,
+    waypoints: str, altitude_ft: int, departure_ts: int, totaleet_s: int,
+    fmt: str = "pdf",
+) -> tuple[bytes, str]:
+    """GET /met/gramet — coupe verticale météo le long de la route.
+
+    Returns (file_bytes, mime_type). Raises AutorouterError on failure.
+    The `waypoints` form (no FPL) is used so we work even when the route
+    text isn't a valid ICAO FPL string.
+    """
+    if not cfg.is_configured():
+        raise AutorouterError("autorouter not configured")
+    params = {
+        "waypoints": waypoints,
+        "altitude": int(altitude_ft),
+        "departuretime": int(departure_ts),
+        "totaleet": int(totaleet_s),
+        "format": fmt if fmt in ("pdf", "png") else "pdf",
+    }
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/met/gramet",
+            params=params, headers=_auth_headers(cfg), timeout=60,
+        )
+    except requests.exceptions.RequestException as e:
+        raise AutorouterError(f"network: {e}")
+    if resp.status_code != 200:
+        raise AutorouterError(f"GRAMET HTTP {resp.status_code}: {resp.text[:300]}")
+    mime = "application/pdf" if params["format"] == "pdf" else "image/png"
+    return resp.content, mime
+
+
 def format_notam(n: NotamRow) -> str:
     """Render a NOTAM as the standard ICAO Q-line + A/B/C/E format."""
     import datetime as _dt

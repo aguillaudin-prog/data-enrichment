@@ -60,6 +60,21 @@ AIRCRAFT_TYPE_PERF = [
         "climb_gradient_pct": 8.5,
     },
     {
+        # Variant marketing 'DHC6-400' (Series 400) — perf identique au DHC6,
+        # référencée par TY-BAB dans DEFAULT_AIRCRAFT. Sans cette ligne le FK
+        # aircraft.type_icao → aircraft_type.icao_designator échoue.
+        "icao_designator": "DHC6-400",
+        "full_name": "De Havilland Canada DHC-6 Twin Otter Series 400",
+        "manufacturer": "Viking Air",
+        "cruise_tas_kt": 150,
+        "service_ceiling_ft": 25000,
+        "range_nm": 700,
+        "wake_category": "L",
+        "min_runway_ft": 1500,
+        "approach_cat": "A",
+        "climb_gradient_pct": 8.5,
+    },
+    {
         "icao_designator": "DA62",
         "full_name": "Diamond DA62",
         "manufacturer": "Diamond Aircraft",
@@ -263,8 +278,17 @@ def reclassify_divers() -> None:
             )
 
 
+def _cleanup_legacy() -> None:
+    """One-shot cleanup runs FIRST so it succeeds even if a later seed step
+    crashes (e.g. FK error during seed_aircraft)."""
+    removed = db.delete_poc_by_name("MERLIN")
+    if removed:
+        print(f"Removed legacy POC 'MERLIN' ({removed} row).")
+
+
 def main() -> int:
     db.init_schema()
+    _cleanup_legacy()
     seed_pilots.main()
     seed_aircraft_type_perf()
     seed_aircraft()

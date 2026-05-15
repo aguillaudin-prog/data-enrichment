@@ -581,6 +581,7 @@ def _render_briefing_section(*, legs: list[dict]) -> None:
 
     if not have_cache:
         st.info("Clique sur **🌤️ Charger** pour récupérer METAR/TAF et NOTAMs depuis autorouter.")
+        _render_gramet_section(legs=legs, ar_cfg=ar_cfg)
         return
 
     data = st.session_state.get(cached_data_key) or {}
@@ -629,6 +630,80 @@ def _render_briefing_section(*, legs: list[dict]) -> None:
                     "_(Note : autorouter ne couvre que la zone Eurocontrol EAD — "
                     "les aérodromes hors Europe peuvent rester vides.)_"
                 )
+
+    _render_gramet_section(legs=legs, ar_cfg=ar_cfg)
+
+
+def _render_gramet_section(*, legs: list[dict], ar_cfg) -> None:
+    """GRAMET (coupe verticale météo) par leg. Téléchargeable en PDF.
+
+    Particulièrement utile en Afrique de l'Ouest où la convection (CB,
+    harmattan, mousson) varie vite — la coupe montre les couches nuageuses
+    et les vents en altitude le long de la route.
+    """
+    from app import autorouter_client
+    valid_legs = [
+        l for l in legs
+        if l.get("origin") and l.get("destination") and isinstance(l.get("eobt"), dt.datetime)
+    ]
+    if not valid_legs:
+        return
+    st.markdown("#### 📈 GRAMET (coupe verticale météo)")
+    st.caption(
+        "Téléchargeable en PDF par leg. Synchrone : 5-15 s par appel."
+    )
+    for i, leg in enumerate(valid_legs):
+        origin = leg["origin"].strip().upper()
+        destination = leg["destination"].strip().upper()
+        route_text = (leg.get("route_text") or "").strip()
+        # autorouter resolves waypoints by name; pass dep + enroute + dest
+        # so its parser has a complete chain.
+        wpts = " ".join([origin] + route_text.split() + [destination]) if route_text else f"{origin} {destination}"
+        fl = int(leg.get("fl") or 90)
+        tas = int(leg.get("tas") or 150)
+        eobt: dt.datetime = leg["eobt"]
+        # Estimate flight duration from great-circle / TAS as a fallback —
+        # GRAMET only needs an envelope, not a precise EET.
+        eet_s = 0
+        ap_o = db.find_airport(origin)
+        ap_d = db.find_airport(destination)
+        if ap_o and ap_d:
+            try:
+                from app import route_engine
+                dist_nm = route_engine._great_circle_nm(
+                    (ap_o["lat"], ap_o["lon"]), (ap_d["lat"], ap_d["lon"])
+                )
+                eet_s = int((dist_nm / max(60, tas)) * 3600)
+            except Exception:
+                pass
+        if eet_s <= 0:
+            eet_s = 3600  # 1h fallback
+        key = f"gramet_{i}_{origin}_{destination}"
+        if st.button(
+            f"📈 GRAMET leg {i + 1} : {origin} → {destination} (FL{fl:03d})",
+            key=key,
+        ):
+            if not ar_cfg.is_configured():
+                st.error("Autorouter pas configuré (voir page ⚙ Admin).")
+            else:
+                with st.spinner("Génération GRAMET…"):
+                    try:
+                        data, mime = autorouter_client.fetch_gramet(
+                            ar_cfg,
+                            waypoints=wpts,
+                            altitude_ft=fl * 100,
+                            departure_ts=int(eobt.timestamp()),
+                            totaleet_s=eet_s,
+                            fmt="pdf",
+                        )
+                        st.download_button(
+                            f"⬇️ GRAMET_{origin}_{destination}.pdf",
+                            data=data, mime=mime,
+                            file_name=f"GRAMET_{origin}_{destination}.pdf",
+                            key=f"{key}_dl",
+                        )
+                    except autorouter_client.AutorouterError as e:
+                        st.error(f"GRAMET : {e}")
 
 
 def _leg_editor(idx: int, leg: dict) -> dict:
