@@ -257,8 +257,9 @@ def suggest_route(
     eobt_iso: str | None = None,
     alternate1: str | None = None,
     alternate2: str | None = None,
-    poll_timeout_s: int = 90,
+    poll_timeout_s: int = 240,
     poll_interval_s: float = 1.5,
+    per_request_timeout_s: int = 90,
 ) -> AutorouterRoute:
     """End-to-end route request:
       1. POST /router → routeid
@@ -266,6 +267,13 @@ def suggest_route(
       3. PUT /router/<id>/close
     Returns the first valid solution. Raises AutorouterError on failure or
     timeout (the longpoll loop is bounded by `poll_timeout_s`).
+
+    The longpoll endpoint is server-blocking: it holds the connection
+    open until messages arrive or its internal timeout triggers. We use
+    per_request_timeout_s=90 so a single poll has room to receive a
+    full router-status update. Network-level ReadTimeout/ConnectionError
+    during longpoll are retried up to 3 times — the route is still
+    running server-side, we just reconnect.
     """
     payload = _build_route_request(
         departure, destination, aircraft_type=aircraft_type,
@@ -273,7 +281,10 @@ def suggest_route(
         alternate1=alternate1, alternate2=alternate2,
     )
     headers = _auth_headers(cfg)
-    resp = requests.post(f"{cfg.base_url}/router", json=payload, headers=headers, timeout=30)
+    resp = requests.post(
+        f"{cfg.base_url}/router", json=payload, headers=headers,
+        timeout=per_request_timeout_s,
+    )
     if resp.status_code != 200:
         raise AutorouterError(
             f"POST /router failed: HTTP {resp.status_code} {resp.text[:500]}"
@@ -291,12 +302,27 @@ def suggest_route(
     logs: list[str] = []
     last_fpl: dict | None = None
     deadline = time.time() + poll_timeout_s
+    max_transient_errors = 3
+    transient_errors = 0
     try:
         while time.time() < deadline:
-            poll_resp = requests.put(
-                f"{cfg.base_url}/router/{route_id}/longpoll",
-                headers=headers, timeout=30,
-            )
+            try:
+                poll_resp = requests.put(
+                    f"{cfg.base_url}/router/{route_id}/longpoll",
+                    headers=headers, timeout=per_request_timeout_s,
+                )
+            except (requests.exceptions.ReadTimeout,
+                    requests.exceptions.ConnectionError) as e:
+                # The router is still running server-side; reconnect and
+                # keep polling until poll_timeout_s is exhausted.
+                transient_errors += 1
+                if transient_errors > max_transient_errors:
+                    raise AutorouterError(
+                        f"Trop d'erreurs réseau pendant le polling ({e})"
+                    )
+                time.sleep(poll_interval_s)
+                continue
+            transient_errors = 0
             if poll_resp.status_code != 200:
                 raise AutorouterError(
                     f"longpoll failed: HTTP {poll_resp.status_code} {poll_resp.text[:300]}"
