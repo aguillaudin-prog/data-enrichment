@@ -1,4 +1,5 @@
 streamlit>=1.32
+streamlit-searchbox>=0.1.20
 python-docx>=1.1
 docxtpl>=0.16
 pandas>=2.2

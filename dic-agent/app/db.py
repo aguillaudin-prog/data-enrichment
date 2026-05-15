@@ -354,6 +354,21 @@ def find_airports_by_prefix(prefix: str, limit: int = 15) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def find_airports_by_name_substring(query: str, limit: int = 15) -> list[sqlite3.Row]:
+    """Airports whose name contains `query` (case-insensitive). Fallback for
+    type-ahead when the user types a city/airport name instead of an ICAO
+    prefix. Ordered by ICAO so output is deterministic."""
+    query = query.strip()
+    if not query:
+        return []
+    with connect() as c:
+        return c.execute(
+            "SELECT icao, name, country_iso FROM airport "
+            "WHERE name LIKE ? COLLATE NOCASE ORDER BY icao LIMIT ?",
+            (f"%{query}%", limit),
+        ).fetchall()
+
+
 def find_waypoint(ident: str, region_hint: str | None = None) -> sqlite3.Row | None:
     ident = ident.strip().upper()
     with connect() as c:

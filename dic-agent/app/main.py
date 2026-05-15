@@ -228,45 +228,55 @@ def _bump_legs_sid() -> None:
     st.session_state["_legs_sid"] = _legs_sid() + 1
 
 
+def _search_airports(query: str) -> list[tuple[str, str]]:
+    """streamlit-searchbox callback. Returns (display_label, value) pairs
+    where the value is the ICAO (what we store in leg state). Matches by
+    ICAO prefix (most common), then by airport name substring (for users
+    who know the city, not the code)."""
+    if not query:
+        return []
+    q = query.strip().upper()
+    seen: set[str] = set()
+    results: list[tuple[str, str]] = []
+    for m in db.find_airports_by_prefix(q, limit=15):
+        if m["icao"] in seen:
+            continue
+        seen.add(m["icao"])
+        label = f"{m['icao']}  ·  {m['name']}"
+        if m["country_iso"]:
+            label += f"  ({m['country_iso']})"
+        results.append((label, m["icao"]))
+    if len(results) < 15:
+        for m in db.find_airports_by_name_substring(q, limit=15 - len(results)):
+            if m["icao"] in seen:
+                continue
+            seen.add(m["icao"])
+            label = f"{m['icao']}  ·  {m['name']}"
+            if m["country_iso"]:
+                label += f"  ({m['country_iso']})"
+            results.append((label, m["icao"]))
+    return results
+
+
 def _apt_input(label: str, default: str, field_key: str) -> str:
-    """ICAO text input with type-ahead autocomplete.
+    """Single ICAO field with live autocomplete dropdown.
 
-    - Below 4 chars: shows a dropdown of airports whose ICAO starts with
-      what the user has typed. Picking one updates the text field on the
-      next rerun.
-    - At 4 chars: validates against the DB and shows the airport name
-      (or a warning if unknown).
+    Powered by streamlit-searchbox: as the user types, the dropdown right
+    below the field is populated from the DB (ICAO prefix + name
+    substring). Picking an entry sets the field to the airport's ICAO.
     """
-    pending = st.session_state.pop(f"_apt_pending_{field_key}", None)
-    if pending is not None:
-        st.session_state[field_key] = pending
-    typed = st.text_input(label, value=default, key=field_key).strip().upper()
-
-    if 0 < len(typed) < 4:
-        matches = db.find_airports_by_prefix(typed, limit=15)
-        if matches:
-            options = ["—  choisir un aéroport  —"] + [
-                f"{m['icao']}  ·  {m['name']}" + (f"  ({m['country_iso']})" if m['country_iso'] else "")
-                for m in matches
-            ]
-            choice = st.selectbox(
-                f"Aéroports commençant par '{typed}' :",
-                options,
-                key=f"{field_key}_sugg",
-                label_visibility="visible",
-            )
-            if choice != options[0]:
-                chosen = choice.split(" ", 1)[0]
-                if chosen != typed:
-                    st.session_state[f"_apt_pending_{field_key}"] = chosen
-                    st.rerun()
-    elif len(typed) == 4:
-        ap = db.find_airport(typed)
-        if ap:
-            st.caption(f"✓ **{typed}** · {ap['name']}" + (f"  ({ap['country_iso']})" if ap['country_iso'] else ""))
-        else:
-            st.warning(f"⚠ Aéroport {typed} introuvable en base.")
-    return typed
+    from streamlit_searchbox import st_searchbox
+    selected = st_searchbox(
+        _search_airports,
+        placeholder=f"{label} — tape ICAO ou nom (ex. EDDL, Düsseldorf)",
+        label=label,
+        default=default or None,
+        key=field_key,
+        clear_on_submit=False,
+    )
+    if isinstance(selected, str):
+        return selected.strip().upper()
+    return (default or "").strip().upper()
 
 
 def _leg_editor(idx: int, leg: dict) -> dict:
