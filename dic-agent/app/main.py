@@ -228,6 +228,47 @@ def _bump_legs_sid() -> None:
     st.session_state["_legs_sid"] = _legs_sid() + 1
 
 
+def _apt_input(label: str, default: str, field_key: str) -> str:
+    """ICAO text input with type-ahead autocomplete.
+
+    - Below 4 chars: shows a dropdown of airports whose ICAO starts with
+      what the user has typed. Picking one updates the text field on the
+      next rerun.
+    - At 4 chars: validates against the DB and shows the airport name
+      (or a warning if unknown).
+    """
+    pending = st.session_state.pop(f"_apt_pending_{field_key}", None)
+    if pending is not None:
+        st.session_state[field_key] = pending
+    typed = st.text_input(label, value=default, key=field_key).strip().upper()
+
+    if 0 < len(typed) < 4:
+        matches = db.find_airports_by_prefix(typed, limit=15)
+        if matches:
+            options = ["—  choisir un aéroport  —"] + [
+                f"{m['icao']}  ·  {m['name']}" + (f"  ({m['country_iso']})" if m['country_iso'] else "")
+                for m in matches
+            ]
+            choice = st.selectbox(
+                f"Aéroports commençant par '{typed}' :",
+                options,
+                key=f"{field_key}_sugg",
+                label_visibility="visible",
+            )
+            if choice != options[0]:
+                chosen = choice.split(" ", 1)[0]
+                if chosen != typed:
+                    st.session_state[f"_apt_pending_{field_key}"] = chosen
+                    st.rerun()
+    elif len(typed) == 4:
+        ap = db.find_airport(typed)
+        if ap:
+            st.caption(f"✓ **{typed}** · {ap['name']}" + (f"  ({ap['country_iso']})" if ap['country_iso'] else ""))
+        else:
+            st.warning(f"⚠ Aéroport {typed} introuvable en base.")
+    return typed
+
+
 def _leg_editor(idx: int, leg: dict) -> dict:
     sid = _legs_sid()
     kprefix = f"leg_s{sid}_{idx}"
@@ -240,13 +281,9 @@ def _leg_editor(idx: int, leg: dict) -> dict:
     st.markdown(f"### Leg {idx + 1}")
     c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
     with c1:
-        origin = st.text_input(
-            "Origin (ICAO)", value=leg.get("origin", ""), key=f"{kprefix}_orig"
-        ).strip().upper()
+        origin = _apt_input("Origin (ICAO)", leg.get("origin", ""), f"{kprefix}_orig")
     with c2:
-        destination = st.text_input(
-            "Destination (ICAO)", value=leg.get("destination", ""), key=f"{kprefix}_dest"
-        ).strip().upper()
+        destination = _apt_input("Destination (ICAO)", leg.get("destination", ""), f"{kprefix}_dest")
     with c3:
         fl = st.number_input("FL", min_value=0, max_value=600, value=int(leg.get("fl", 90)), step=10, key=f"{kprefix}_fl")
     with c4:

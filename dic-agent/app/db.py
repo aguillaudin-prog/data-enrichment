@@ -339,6 +339,21 @@ def find_airport(token: str) -> sqlite3.Row | None:
         return c.execute("SELECT * FROM airport WHERE iata = ?", (token,)).fetchone()
 
 
+def find_airports_by_prefix(prefix: str, limit: int = 15) -> list[sqlite3.Row]:
+    """Airports whose ICAO starts with `prefix`, ordered by ICAO. Used for
+    type-ahead autocomplete in the leg editor. Returns at most `limit` rows
+    so a 1-letter prefix doesn't dump the entire DB into the UI."""
+    prefix = prefix.strip().upper()
+    if not prefix:
+        return []
+    with connect() as c:
+        return c.execute(
+            "SELECT icao, name, country_iso FROM airport "
+            "WHERE icao LIKE ? ORDER BY icao LIMIT ?",
+            (prefix + "%", limit),
+        ).fetchall()
+
+
 def find_waypoint(ident: str, region_hint: str | None = None) -> sqlite3.Row | None:
     ident = ident.strip().upper()
     with connect() as c:
