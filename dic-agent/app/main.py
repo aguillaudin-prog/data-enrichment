@@ -326,33 +326,55 @@ def _search_airports(query: str) -> list[tuple[str, str]]:
 def _apt_input(label: str, default: str, field_key: str) -> str:
     """Single ICAO field with live autocomplete dropdown.
 
-    Powered by streamlit-searchbox: as the user types, the dropdown right
-    below the field is populated from the DB (ICAO prefix + name
-    substring). Picking an entry sets the field to the airport's ICAO.
+    Three states:
+      - empty + no default: full searchbox visible immediately
+      - default loaded (e.g. from saved mission): airport label shown
+        with a small ✏️ Changer toggle. The searchbox appears only when
+        the user explicitly clicks Changer, so a stray keystroke can't
+        replace a template-loaded airport.
+      - mid-edit: searchbox visible, locks the chosen value back into
+        place once a selection is made.
 
-    When `default` is non-empty (e.g. loaded from a saved mission template),
-    we display the airport label above the searchbox so the user sees what
-    was loaded. streamlit-searchbox's `default` parameter doesn't pre-fill
-    the visible search field, so without this caption the field looks
-    empty even though state holds a valid ICAO.
+    streamlit-searchbox's `default` parameter doesn't pre-fill the visible
+    field, hence the explicit caption pattern.
     """
     from streamlit_searchbox import st_searchbox
+
+    edit_flag_key = f"_apt_edit_{field_key}"
+
     if default:
         ap = db.find_airport(default)
-        if ap:
-            country = f" ({ap['country_iso']})" if ap['country_iso'] else ""
-            st.markdown(f"**{label}** : `{default}` · {ap['name']}{country}")
-        else:
-            st.markdown(f"**{label}** : `{default}` (inconnu en base)")
+        col_label, col_btn = st.columns([5, 1])
+        with col_label:
+            if ap:
+                country = f" ({ap['country_iso']})" if ap['country_iso'] else ""
+                st.markdown(f"**{label}** : `{default}` · {ap['name']}{country}")
+            else:
+                st.markdown(f"**{label}** : `{default}` (inconnu en base)")
+        with col_btn:
+            if st.button(
+                "✏️ Changer", key=f"{field_key}_edit_btn",
+                use_container_width=True,
+            ):
+                st.session_state[edit_flag_key] = True
+                st.rerun()
+        if not st.session_state.get(edit_flag_key):
+            return default
+
     selected = st_searchbox(
         _search_airports,
-        placeholder=f"Changer {label.lower()} — tape ICAO ou nom" if default else f"{label} — tape ICAO ou nom (ex. EDDL, Düsseldorf)",
+        placeholder=(
+            f"Tape ICAO ou nom (ex. EDDL, Düsseldorf)" if not default
+            else f"Nouvel aéroport pour {label.lower()} — tape ICAO ou nom"
+        ),
         label="" if default else label,
         default=None,
         key=field_key,
         clear_on_submit=False,
     )
     if isinstance(selected, str) and selected.strip():
+        # Selection committed → exit edit mode so next render shows the label
+        st.session_state.pop(edit_flag_key, None)
         return selected.strip().upper()
     return (default or "").strip().upper()
 
@@ -498,11 +520,21 @@ def _leg_editor(idx: int, leg: dict) -> dict:
         ),
     )
 
+    # Auto-fill alternate from historical patterns (most-common alternate
+    # seen for this destination across all saved templates). Only applies
+    # when the user hasn't typed anything yet.
+    suggested_alt = leg.get("alternate", "")
+    if not suggested_alt and destination:
+        suggested_alt = db.default_alternate_for(destination) or ""
     alternate = st.text_input(
         f"Alternate de {destination or 'destination'} (ICAO)",
-        value=leg.get("alternate", ""),
+        value=suggested_alt,
         key=f"{kprefix}_alternate",
-        help="Aérodrome de déroutement si l'arrivée est impossible. Un par leg.",
+        help=(
+            "Aérodrome de déroutement si l'arrivée est impossible. Un par leg. "
+            "Pré-rempli automatiquement avec l'alternate le plus fréquent pour "
+            "cette destination dans les missions sauvegardées."
+        ),
     ).strip().upper()
 
     msg = st.session_state.pop(f"_pending_suggest_msg_{sid}_{idx}", None)
