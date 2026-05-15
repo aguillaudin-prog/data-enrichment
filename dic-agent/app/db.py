@@ -354,6 +354,40 @@ def find_airports_by_prefix(prefix: str, limit: int = 15) -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def default_alternate_for(destination_icao: str) -> str | None:
+    """Look up the typical alternate airport for `destination_icao`, derived
+    from existing route_template legs in the DB. Returns the most-frequent
+    alternate ICAO seen for that destination across all stored templates,
+    or None if the destination has never been used.
+
+    Implementation: scan every route_template.legs_json entry, count the
+    (destination, alternate) pairs, return the alternate with the highest
+    count for the given destination. Cheap because the templates table is
+    small (dozens of rows max).
+    """
+    destination_icao = (destination_icao or "").strip().upper()
+    if not destination_icao:
+        return None
+    counts: dict[str, int] = {}
+    with connect() as c:
+        rows = c.execute("SELECT legs_json FROM route_template").fetchall()
+    import json as _json
+    for r in rows:
+        try:
+            legs = _json.loads(r["legs_json"])
+        except Exception:
+            continue
+        for leg in legs:
+            if (leg.get("destination") or "").strip().upper() != destination_icao:
+                continue
+            alt = (leg.get("alternate") or "").strip().upper()
+            if alt:
+                counts[alt] = counts.get(alt, 0) + 1
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
 def find_airports_by_name_substring(query: str, limit: int = 15) -> list[sqlite3.Row]:
     """Airports whose name contains `query` (case-insensitive). Fallback for
     type-ahead when the user types a city/airport name instead of an ICAO
