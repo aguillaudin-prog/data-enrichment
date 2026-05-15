@@ -1414,13 +1414,22 @@ if page_idx == 2:
             # Auto-save the current mission as a route_template so the library
             # grows naturally with use. Folder = country ISO of the very first
             # leg's origin, or 'Divers' if unknown.
-            # Dossier de classement : on suit l'opérateur d'abord (sa base
-            # opérationnelle), avec fallback sur le code pays de l'origine.
-            operator = (mission.get("operator") or "").strip()
-            folder = OPERATOR_FOLDER.get(operator)
-            if not folder:
-                origin_iso = _resolve_country_for_airport(st.session_state.legs[0]["origin"])
-                folder = origin_iso or "Divers"
+            # Dossier de classement : la géographie de la route prime sur
+            # l'opérateur. Une route LFMD → LFMV opérée par AMAZONE doit
+            # finir dans 'France', pas dans 'Bénin'. OPERATOR_FOLDER ne sert
+            # plus que de filet quand l'origine n'a pas d'ISO connu.
+            origin_iso = _resolve_country_for_airport(st.session_state.legs[0]["origin"])
+            country_name = db.find_country_name(origin_iso) if origin_iso else None
+            if country_name:
+                # find_country_name renvoie 'CÔTE D'IVOIRE' / 'FRANCE' en
+                # majuscules — on titlecase pour des dossiers lisibles
+                # ('France', 'Côte D'Ivoire'). 'Bénin' garde son accent
+                # via Natural Earth name_fr.
+                folder = country_name.title()
+            else:
+                folder = OPERATOR_FOLDER.get(
+                    (mission.get("operator") or "").strip()
+                ) or origin_iso or "Divers"
             sanitised_legs = [
                 {
                     "order": i + 1,
