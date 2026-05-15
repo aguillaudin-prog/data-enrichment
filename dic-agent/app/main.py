@@ -27,12 +27,16 @@ def _enforce_auth() -> None:
 
     Reads the user/password matrix from `st.secrets` (set in the Streamlit
     Cloud Secrets UI for the deployed app, or in `.streamlit/secrets.toml`
-    locally). If `[users]` is absent in secrets, auth is bypassed — useful
+    locally). If secrets are absent entirely, auth is bypassed — useful
     for local dev. On the deployed app the secrets are set, so every visit
     requires login.
     """
-    if "users" not in st.secrets:
-        return  # local dev mode, no auth
+    try:
+        has_users = "users" in st.secrets
+    except Exception:
+        has_users = False  # no secrets.toml at all → local dev mode
+    if not has_users:
+        return
     import streamlit_authenticator as stauth
     credentials = {
         "usernames": {
