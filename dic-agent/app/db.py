@@ -432,6 +432,17 @@ def list_countries() -> list[sqlite3.Row]:
         return c.execute("SELECT iso_a2, iso_a3, name_en, name_fr, geom_geojson FROM country").fetchall()
 
 
+def find_country_name(iso_a2: str) -> str | None:
+    """Return the English name for an ISO2 country code (BJ → 'Benin')."""
+    if not iso_a2:
+        return None
+    with connect() as c:
+        row = c.execute(
+            "SELECT name_en FROM country WHERE iso_a2 = ?", (iso_a2.strip().upper(),)
+        ).fetchone()
+        return row["name_en"] if row else None
+
+
 def list_aircraft(operator: str | None = None) -> list[sqlite3.Row]:
     with connect() as c:
         if operator:

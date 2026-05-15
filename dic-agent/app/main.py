@@ -1021,6 +1021,8 @@ if page_idx == 2:
         leg_input = {
             "origin": leg["origin"],
             "destination": leg["destination"],
+            "alternate": leg.get("alternate", ""),
+            "eobt": leg.get("eobt"),
             "origin_iso": _resolve_country_for_airport(leg["origin"]),
             "destination_iso": _resolve_country_for_airport(leg["destination"]),
             "overrides": {},
