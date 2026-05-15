@@ -82,15 +82,62 @@ _MONTHS_EN = {
 }
 
 
+def _enrich_endpoint(label: str) -> str:
+    """If `label` is the identifier of a user-added airport, append its DMS
+    coordinates so the entry/exit cell in Appendix 1 unambiguously locates
+    the aerodrome (reference DICs show the coords on those rows when the
+    label has no published ICAO). Standard ICAO labels and border-crossing
+    pseudo-labels (BORDER, EXIT BENIN, ENTRY NIGERIA) are returned as-is.
+    """
+    if not label:
+        return label
+    # Border-crossing pseudo-labels start with capital prefixes; never look
+    # them up as airports.
+    first_word = label.split()[0].upper()
+    if first_word in ("BORDER", "ENTRY", "EXIT"):
+        return label
+    ap = db.find_airport(first_word)
+    if not ap:
+        return label
+    try:
+        if not ap["user_added"]:
+            return label
+    except (KeyError, IndexError):
+        return label
+    coords = f"{_format_dms_lat(ap['lat'])} / {_format_dms_lon(ap['lon'])}"
+    return f"{label}\n{coords}"
+
+
+def _format_dms_lat(lat: float) -> str:
+    """Decimal latitude → 'N 9°34'45.56\"' (DMS, matching reference DIC notation)."""
+    hemi = "N" if lat >= 0 else "S"
+    lat = abs(lat)
+    d = int(lat)
+    m_full = (lat - d) * 60
+    m = int(m_full)
+    s = (m_full - m) * 60
+    return f"{hemi} {d}°{m:02d}'{s:05.2f}\""
+
+
+def _format_dms_lon(lon: float) -> str:
+    hemi = "E" if lon >= 0 else "W"
+    lon = abs(lon)
+    d = int(lon)
+    m_full = (lon - d) * 60
+    m = int(m_full)
+    s = (m_full - m) * 60
+    return f"{hemi} {d}°{m:02d}'{s:05.2f}\""
+
+
 def _format_airport(icao: str) -> str:
     """Render an airport for the DIC airport-list cells.
 
     Standard ICAO airports → 'CITY COUNTRY ICAO' (e.g. 'COTONOU BENIN DBBB').
     User-added operational labels (FOB, military AFB without a published
-    ICAO) → '<NAME> <COUNTRY>' — no ICAO repeated since the 'ICAO' field
-    IS the operational name. Matches the reference DIC convention where
-    these get a textual identifier without an ICAO-style suffix:
-      `(24) Departure airport | TOUROU / KAINJI NAFB NIGERIA`
+    ICAO) → '<NAME> <COUNTRY> <DMS coords>' — the 'ICAO' field IS the
+    operational name, so no ICAO repeated, but the GPS coords appear so
+    the receiving authority can locate the aerodrome unambiguously
+    (matches reference DIC: 'TOUROU N 9°34'45.56" / E 3°14'7.09"').
 
     Returns the bare label if any lookup fails so we never lose the
     identifier in the rendered DIC.
@@ -110,10 +157,9 @@ def _format_airport(icao: str) -> str:
     country_upper = (country or "").upper()
     name = (ap["name"] or "").strip()
     if is_user_added:
-        # Use the stored name (which may be longer than the ICAO key) +
-        # country. No ICAO suffix — the 'icao' is the operational label.
         label = name.upper() if name and name.upper() != icao else icao
-        parts = [p for p in (label, country_upper) if p]
+        coords = f"{_format_dms_lat(ap['lat'])} / {_format_dms_lon(ap['lon'])}"
+        parts = [p for p in (label, country_upper, coords) if p]
         return " ".join(parts)
     # Standard ICAO airport: CITY COUNTRY ICAO
     municipality = ""
@@ -374,9 +420,9 @@ def _build_dic(mission: dict, leg_data: list[dict]) -> bytes:
         for seg in leg["segments"]:
             row = leg_tbl.add_row()
             _plain(row.cells[0], (seg["state_name"] or "").upper())
-            _plain(row.cells[1], f"{seg['entry_label']}\n{seg['entry_time_str']}")
+            _plain(row.cells[1], f"{_enrich_endpoint(seg['entry_label'])}\n{seg['entry_time_str']}")
             _plain(row.cells[2], seg["route_in_country"])
-            _plain(row.cells[3], f"{seg['exit_label']}\n{seg['exit_time_str']}")
+            _plain(row.cells[3], f"{_enrich_endpoint(seg['exit_label'])}\n{seg['exit_time_str']}")
             _plain(row.cells[4], str(seg.get("fl") or ""))
             _plain(row.cells[5], str(seg.get("tas") or ""))
 
