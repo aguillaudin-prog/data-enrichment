@@ -574,6 +574,12 @@ def save_crew(name: str, members: list[dict], n_crew: int) -> int:
         return cur.fetchone()[0]
 
 
+def delete_poc_by_name(name: str) -> int:
+    with connect() as c:
+        cur = c.execute("DELETE FROM poc WHERE name = ?", (name.strip(),))
+        return cur.rowcount
+
+
 def save_poc(rank: str, name: str, phone: str, email_personal: str, email_functional: str, fax: str) -> int:
     with connect() as c:
         cur = c.execute(

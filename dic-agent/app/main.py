@@ -8,6 +8,7 @@ import datetime as dt
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 # Ensure the project root is on sys.path so `from app import ...` works
 # regardless of the directory `streamlit run` was launched from.
@@ -268,7 +269,7 @@ def _poc_picker(key_prefix: str) -> dict:
         c1, c2, c3 = st.columns(3)
         with c1:
             new_name = st.text_input(
-                "POC (grade + nom, ex. OF1 MERLIN)", key=f"{key_prefix}_poc_new_name",
+                "POC (grade + nom, ex. OFFICIER TRANSIT)", key=f"{key_prefix}_poc_new_name",
             )
         with c2:
             new_email = st.text_input(
@@ -341,59 +342,180 @@ def _search_airports(query: str) -> list[tuple[str, str]]:
 
 
 def _apt_input(label: str, default: str, field_key: str) -> str:
-    """Single ICAO field with live autocomplete dropdown.
+    """Single ICAO field with always-visible autocomplete dropdown.
 
-    Three states:
-      - empty + no default: full searchbox visible immediately
-      - default loaded (e.g. from saved mission): airport label shown
-        with a small ✏️ Changer toggle. The searchbox appears only when
-        the user explicitly clicks Changer, so a stray keystroke can't
-        replace a template-loaded airport.
-      - mid-edit: searchbox visible, locks the chosen value back into
-        place once a selection is made.
+    Behaviour : la searchbox reste toujours affichée. Tant qu'aucune
+    sélection n'a été faite, la valeur courante (provenant d'un template
+    ou d'une saisie précédente) sert de valeur active et est rappelée
+    par une caption « ✓ Sélectionné : XXX ». Dès qu'on clique sur un
+    item du dropdown → ça remplace immédiatement, pas de bouton crayon.
 
-    streamlit-searchbox's `default` parameter doesn't pre-fill the visible
-    field, hence the explicit caption pattern.
+    streamlit-searchbox's `default` ne pré-remplit pas visuellement le
+    champ, d'où la caption explicite.
     """
     from streamlit_searchbox import st_searchbox
 
-    edit_flag_key = f"_apt_edit_{field_key}"
-
-    if default:
-        ap = db.find_airport(default)
-        col_label, col_btn = st.columns([5, 1])
-        with col_label:
-            if ap:
-                country = f" ({ap['country_iso']})" if ap['country_iso'] else ""
-                st.markdown(f"**{label}** : `{default}` · {ap['name']}{country}")
-            else:
-                st.markdown(f"**{label}** : `{default}` (inconnu en base)")
-        with col_btn:
-            if st.button(
-                "✏️ Changer", key=f"{field_key}_edit_btn",
-                use_container_width=True,
-            ):
-                st.session_state[edit_flag_key] = True
-                st.rerun()
-        if not st.session_state.get(edit_flag_key):
-            return default
-
     selected = st_searchbox(
         _search_airports,
-        placeholder=(
-            f"Tape ICAO ou nom (ex. EDDL, Düsseldorf)" if not default
-            else f"Nouvel aéroport pour {label.lower()} — tape ICAO ou nom"
-        ),
-        label="" if default else label,
+        placeholder="Tape ICAO ou nom (ex. EDDL, Düsseldorf)",
+        label=label,
         default=None,
         key=field_key,
         clear_on_submit=False,
     )
     if isinstance(selected, str) and selected.strip():
-        # Selection committed → exit edit mode so next render shows the label
-        st.session_state.pop(edit_flag_key, None)
-        return selected.strip().upper()
-    return (default or "").strip().upper()
+        value = selected.strip().upper()
+    else:
+        value = (default or "").strip().upper()
+
+    if value:
+        ap = db.find_airport(value)
+        if ap:
+            country = f" ({ap['country_iso']})" if ap['country_iso'] else ""
+            st.caption(f"✓ Sélectionné : **{value}** · {ap['name']}{country}")
+        else:
+            st.caption(f"✓ Sélectionné : **{value}** (inconnu en base)")
+    return value
+
+
+def _run_dual_suggest(
+    *, sid_key: str, idx: int, kprefix: str,
+    origin: str, destination: str,
+    ac_type: str, ac_perf, fl: float,
+    eobt, leg: dict,
+) -> None:
+    """Run local A* + autorouter back-to-back and stash both results into
+    session_state under stable keys so the next rerender shows both cards."""
+    state_key = f"_dual_sugg_{sid_key}_{idx}"
+    result: dict[str, Any] = {"local": None, "ar": None, "local_err": None, "ar_err": None}
+
+    # 1) Local A* — fast (<2 s). Always runs.
+    min_rwy = int(ac_perf["min_runway_ft"]) if (ac_perf and ac_perf["min_runway_ft"]) else None
+    with st.spinner("Calcul route locale (A*)…"):
+        try:
+            sug, sid_pick, star_pick = route_suggester.suggest_with_procedures(
+                origin, destination, min_runway_ft=min_rwy,
+            )
+            if sug.waypoints and sug.distance_nm > 0:
+                enroute = sug.route_text
+                include_procs = st.session_state.get(f"{kprefix}_inc_procs", True)
+                full_route = enroute
+                extras: list[str] = []
+                if sid_pick and include_procs:
+                    exit_fix = sid_pick["connecting_fix"]
+                    if enroute and not enroute.split()[0].upper() == exit_fix.upper():
+                        full_route = f"{sid_pick['proc_name']} {exit_fix} {enroute}".strip()
+                    else:
+                        full_route = f"{sid_pick['proc_name']} {enroute}".strip()
+                    extras.append(
+                        f"SID **{sid_pick['proc_name']}** (rwy {sid_pick['runways_csv'] or '-'} → {exit_fix})"
+                    )
+                elif sid_pick:
+                    extras.append(
+                        f"SID candidat : **{sid_pick['proc_name']}** → {sid_pick['connecting_fix']}"
+                    )
+                if star_pick and include_procs:
+                    entry_fix = star_pick["connecting_fix"]
+                    tokens = full_route.split()
+                    if tokens and tokens[-1].upper() != entry_fix.upper():
+                        full_route = f"{full_route} {entry_fix} {star_pick['proc_name']}".strip()
+                    else:
+                        full_route = f"{full_route} {star_pick['proc_name']}".strip()
+                    extras.append(
+                        f"STAR **{star_pick['proc_name']}** ({entry_fix} → rwy {star_pick['runways_csv'] or '-'})"
+                    )
+                elif star_pick:
+                    extras.append(
+                        f"STAR candidate : **{star_pick['proc_name']}** ← {star_pick['connecting_fix']}"
+                    )
+                result["local"] = {
+                    "route_text": full_route,
+                    "distance_nm": sug.distance_nm,
+                    "nodes": sug.nodes_explored,
+                    "extras": extras,
+                }
+            else:
+                result["local_err"] = "Pas de route trouvée (vérifie origine/destination)."
+        except Exception as e:
+            result["local_err"] = f"A* a échoué : {e}"
+
+    # 2) Autorouter — slower (30-90 s). Skipped silently if not configured.
+    from app import autorouter_client
+    ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
+    if ar_cfg.is_configured():
+        with st.spinner("Appel autorouter.aero (peut prendre 30-90 s)…"):
+            try:
+                ar_route = autorouter_client.suggest_route(
+                    ar_cfg,
+                    departure=origin, destination=destination,
+                    aircraft_type=ac_type or None,
+                    cruise_level=int(fl) if fl else None,
+                    eobt_iso=eobt.isoformat() if eobt else None,
+                    alternate1=leg.get("alternate") or None,
+                )
+                result["ar"] = {
+                    "route_text": ar_route.route_text or ar_route.fpl,
+                    "distance_nm": ar_route.distance_nm,
+                    "time_min": ar_route.time_seconds // 60,
+                    "logs_tail": (ar_route.log_messages or [])[-3:],
+                }
+            except autorouter_client.AutorouterError as e:
+                result["ar_err"] = str(e)
+    else:
+        result["ar_err"] = "Pas configuré (voir page ⚙ Admin)."
+
+    st.session_state[state_key] = result
+
+
+def _render_dual_suggest(*, sid_key: str, idx: int, kprefix: str) -> None:
+    """Render the two route options (local + autorouter) side by side
+    with an 'Appliquer' button on each."""
+    state_key = f"_dual_sugg_{sid_key}_{idx}"
+    result = st.session_state.get(state_key)
+    if not result:
+        return
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("**✨ Route locale (A\\*)**")
+        if result.get("local"):
+            r = result["local"]
+            st.code(r["route_text"], language="text")
+            st.caption(f"{r['distance_nm']:.0f} NM · {r['nodes']} nœuds explorés")
+            if r["extras"]:
+                for x in r["extras"]:
+                    st.caption("• " + x)
+            if st.button("✅ Appliquer", key=f"{kprefix}_apply_local", use_container_width=True):
+                st.session_state[f"_pending_route_{sid_key}_{idx}"] = r["route_text"]
+                st.session_state[f"_pending_suggest_msg_{sid_key}_{idx}"] = (
+                    f"Appliquée : route locale `{r['route_text']}` ({r['distance_nm']:.0f} NM)"
+                )
+                st.session_state.pop(state_key, None)
+                st.rerun()
+        else:
+            st.error(result.get("local_err") or "—")
+
+    with col_b:
+        st.markdown("**🌐 Route autorouter.aero**")
+        if result.get("ar"):
+            r = result["ar"]
+            st.code(r["route_text"] or "(vide)", language="text")
+            st.caption(f"{r['distance_nm']:.0f} NM · {r['time_min']} min")
+            if r["logs_tail"]:
+                st.caption("IFPS : " + " · ".join(r["logs_tail"]))
+            if st.button("✅ Appliquer", key=f"{kprefix}_apply_ar", use_container_width=True):
+                st.session_state[f"_pending_route_{sid_key}_{idx}"] = r["route_text"]
+                st.session_state[f"_pending_suggest_msg_{sid_key}_{idx}"] = (
+                    f"Appliquée : route autorouter `{r['route_text']}` ({r['distance_nm']:.0f} NM)"
+                )
+                st.session_state.pop(state_key, None)
+                st.rerun()
+        else:
+            st.warning(result.get("ar_err") or "—")
+
+    if st.button("✕ Fermer les suggestions", key=f"{kprefix}_close_sugg"):
+        st.session_state.pop(state_key, None)
+        st.rerun()
 
 
 def _leg_editor(idx: int, leg: dict) -> dict:
@@ -461,110 +583,34 @@ def _leg_editor(idx: int, leg: dict) -> dict:
         )
     eobt = dt.datetime.combine(d, t).replace(tzinfo=dt.timezone.utc)
 
-    rc1, rc2, rc3 = st.columns([4, 1, 1])
+    rc1, rc2 = st.columns([4, 1])
     with rc1:
         route_text = st.text_input(
             "Route texte ICAO (ex. `TYE POLTO LAG L433 IBA R778 TEGDA MNA`)",
             value=leg.get("route_text", ""),
             key=f"{kprefix}_route",
         )
-    with rc3:
-        st.write("")
-        st.write("")
-        if st.button(
-            "🌐 Autorouter",
-            key=f"{kprefix}_ar_suggest",
-            help="Suggestion approfondie via autorouter.aero (préférences IFR, validation IFPS)",
-        ):
-            if origin and destination:
-                from app import autorouter_client
-                ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
-                if not ar_cfg.is_configured():
-                    st.error(
-                        "Autorouter pas configuré. Ouvre la sidebar → "
-                        "'🌐 Autorouter API' pour la marche à suivre."
-                    )
-                else:
-                    try:
-                        with st.spinner("Appel autorouter (peut prendre 30-90s)…"):
-                            ar_route = autorouter_client.suggest_route(
-                                ar_cfg,
-                                departure=origin, destination=destination,
-                                aircraft_type=ac_type or None,
-                                cruise_level=int(fl) if fl else None,
-                                eobt_iso=eobt.isoformat() if eobt else None,
-                                alternate1=leg.get("alternate") or None,
-                            )
-                        st.session_state[f"_pending_route_{sid}_{idx}"] = (
-                            ar_route.route_text or ar_route.fpl
-                        )
-                        msg = (
-                            f"🌐 Route autorouter : `{ar_route.route_text}` "
-                            f"({ar_route.distance_nm:.0f} NM, "
-                            f"{ar_route.time_seconds // 60} min)"
-                        )
-                        if ar_route.log_messages:
-                            tail = ar_route.log_messages[-3:]
-                            msg += "  \nValidation IFPS : " + " · ".join(tail)
-                        st.session_state[f"_pending_suggest_msg_{sid}_{idx}"] = msg
-                        st.rerun()
-                    except autorouter_client.AutorouterError as e:
-                        st.error(f"Autorouter : {e}")
     with rc2:
         st.write("")
         st.write("")
-        if st.button("✨ Suggérer", key=f"{kprefix}_suggest", help="A* local sur les NAVAID dans le corridor"):
+        if st.button(
+            "🤖 Suggérer",
+            key=f"{kprefix}_suggest",
+            help="Lance les deux moteurs (A* local + autorouter.aero) et affiche les deux routes. Tu choisis celle à appliquer.",
+            use_container_width=True,
+        ):
             if origin and destination:
-                min_rwy = int(ac_perf["min_runway_ft"]) if (ac_perf and ac_perf["min_runway_ft"]) else None
-                with st.spinner("Calcul A*…"):
-                    sug, sid_pick, star_pick = route_suggester.suggest_with_procedures(
-                        origin, destination, min_runway_ft=min_rwy,
-                    )
-                if sug.waypoints and sug.distance_nm > 0:
-                    enroute = sug.route_text
-                    include_procs = st.session_state.get(f"{kprefix}_inc_procs", True)
-                    full_route = enroute
-                    extras: list[str] = []
-                    if sid_pick and include_procs:
-                        exit_fix = sid_pick["connecting_fix"]
-                        if enroute and not enroute.split()[0].upper() == exit_fix.upper():
-                            full_route = f"{sid_pick['proc_name']} {exit_fix} {enroute}".strip()
-                        else:
-                            full_route = f"{sid_pick['proc_name']} {enroute}".strip()
-                        extras.append(
-                            f"SID **{sid_pick['proc_name']}** "
-                            f"(rwy {sid_pick['runways_csv'] or '-'} → {exit_fix})"
-                        )
-                    elif sid_pick:
-                        extras.append(
-                            f"SID candidat (non inclus) : **{sid_pick['proc_name']}** → {sid_pick['connecting_fix']}"
-                        )
-                    if star_pick and include_procs:
-                        entry_fix = star_pick["connecting_fix"]
-                        tokens = full_route.split()
-                        if tokens and tokens[-1].upper() != entry_fix.upper():
-                            full_route = f"{full_route} {entry_fix} {star_pick['proc_name']}".strip()
-                        else:
-                            full_route = f"{full_route} {star_pick['proc_name']}".strip()
-                        extras.append(
-                            f"STAR **{star_pick['proc_name']}** "
-                            f"({entry_fix} → rwy {star_pick['runways_csv'] or '-'})"
-                        )
-                    elif star_pick:
-                        extras.append(
-                            f"STAR candidate (non incluse) : **{star_pick['proc_name']}** ← {star_pick['connecting_fix']}"
-                        )
-                    st.session_state[f"_pending_route_{sid}_{idx}"] = full_route
-                    msg = (
-                        f"Route suggérée : `{full_route}` "
-                        f"({sug.distance_nm:.0f} NM, {sug.nodes_explored} nœuds explorés)"
-                    )
-                    if extras:
-                        msg += "  \nAuto-sélection : " + " · ".join(extras)
-                    st.session_state[f"_pending_suggest_msg_{sid}_{idx}"] = msg
-                    st.rerun()
-                else:
-                    st.error("Pas de route trouvée — vérifie les ICAO d'origine/destination.")
+                _run_dual_suggest(
+                    sid_key=sid, idx=idx, kprefix=kprefix,
+                    origin=origin, destination=destination,
+                    ac_type=ac_type, ac_perf=ac_perf, fl=fl,
+                    eobt=eobt, leg=leg,
+                )
+                st.rerun()
+
+    # Render dual-suggest results (both A* local + autorouter) with
+    # an "Appliquer" button on each so the operator picks.
+    _render_dual_suggest(sid_key=sid, idx=idx, kprefix=kprefix)
 
     st.checkbox(
         "Inclure SID/STAR auto dans la route",
@@ -707,6 +753,7 @@ PAGES = [
     ("1.", "Mission & profils", "Avion, équipage, compagnie"),
     ("2.", "Legs", "Itinéraire, dates, route"),
     ("3.", "Preview & export", "Génère le .docx DIC"),
+    ("⚙", "Admin", "Aérodromes hors ICAO, API autorouter, config"),
 ]
 
 
@@ -749,91 +796,8 @@ with st.sidebar:
     # keep working without an inline string.
     template_format = "FRA"
 
-    # ── User airports management (FOB / military bases without ICAO) ──
-    with st.expander("🛩️ Aérodromes opérationnels (sans ICAO)"):
-        user_aps = db.list_user_airports()
-        if user_aps:
-            st.caption(f"{len(user_aps)} aérodrome(s) déjà en base :")
-            for ap in user_aps:
-                cols = st.columns([3, 1])
-                with cols[0]:
-                    st.markdown(
-                        f"**{ap['icao']}** — {ap['name']}  "
-                        f"({ap['country_iso']})  ·  "
-                        f"`{ap['lat']:.4f}°, {ap['lon']:.4f}°`"
-                    )
-                with cols[1]:
-                    if st.button("🗑️", key=f"del_uap_{ap['icao']}", help="Supprimer"):
-                        db.delete_user_airport(ap["icao"])
-                        st.rerun()
-        else:
-            st.caption("Aucun aérodrome opérationnel en base.")
-        st.markdown("**Ajouter :**")
-        c1, c2 = st.columns(2)
-        with c1:
-            new_label = st.text_input(
-                "Identifiant (ex. TOUROU, KAINJI)",
-                key="uap_label",
-                help="Le nom court qu'utilisera l'agent comme origin/destination",
-            ).strip().upper()
-            new_name = st.text_input(
-                "Nom complet (ex. Kainji NAFB)", key="uap_name",
-            ).strip()
-            new_country = st.text_input(
-                "Pays (ISO 2-letter, ex. BJ, NG)", key="uap_country",
-                max_chars=2,
-            ).strip().upper()
-        with c2:
-            new_lat = st.number_input(
-                "Latitude (°N+ / S-)", value=0.0, format="%.6f", key="uap_lat",
-            )
-            new_lon = st.number_input(
-                "Longitude (°E+ / W-)", value=0.0, format="%.6f", key="uap_lon",
-            )
-            is_mil = st.checkbox("Militaire", value=True, key="uap_mil")
-        if new_label and new_name and st.button("💾 Sauver", key="uap_save"):
-            db.save_user_airport(
-                icao=new_label, name=new_name,
-                country_iso=new_country or "",
-                lat=float(new_lat), lon=float(new_lon),
-                is_military=is_mil,
-            )
-            st.success(f"Aérodrome {new_label} ajouté.")
-            st.rerun()
-
-    st.divider()
-    with st.expander("🌐 Autorouter API (suggestion approfondie)"):
-        from app import autorouter_client
-        ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
-        if ar_cfg.is_configured():
-            st.caption(f"✓ Configuré — `{ar_cfg.base_url}`")
-            if st.button("🔌 Test connexion", key="ar_test"):
-                try:
-                    info = autorouter_client.ping_version(ar_cfg)
-                    st.success(
-                        f"API v{info.get('major')}.{info.get('minor')}.{info.get('patch')} "
-                        f"({'prod' if info.get('production') else 'sandbox'})"
-                    )
-                    # Test the token endpoint too (proves credentials work)
-                    try:
-                        autorouter_client._get_token(ar_cfg)
-                        st.success("Token OAuth obtenu — credentials valides.")
-                    except autorouter_client.AutorouterError as e:
-                        st.error(f"Token : {e}")
-                except autorouter_client.AutorouterError as e:
-                    st.error(str(e))
-        else:
-            st.caption(
-                "Pas configuré. Ajoute dans Streamlit Cloud → Settings → Secrets :"
-            )
-            st.code(
-                "[autorouter]\n"
-                'base_url = "https://api.autorouter.aero/v1.0"\n'
-                'token_url = "https://api.autorouter.aero/v1.0/oauth2/token"\n'
-                'client_id = "ton.email@example.org"\n'
-                'client_secret = "ton-mot-de-passe-autorouter"\n',
-                language="toml",
-            )
+    # Admin sections (aérodromes hors ICAO, autorouter API) ont migré
+    # vers la 4e page "⚙ Admin" pour désencombrer la sidebar.
 
     st.divider()
     st.caption(
@@ -1288,6 +1252,102 @@ if page_idx == 2:
                 data=full_text,
                 file_name="FPL_" + (mission.get("registration") or "mission").replace("/", "-") + ".txt",
                 mime="text/plain",
+            )
+
+    _step_nav_footer()
+
+
+if page_idx == 3:
+    st.caption(
+        "Configuration et données opérationnelles. Ces sections n'impactent pas "
+        "la génération du DIC tant que tu n'en as pas besoin."
+    )
+
+    with st.expander("🛩️ Aérodromes opérationnels (sans ICAO)", expanded=True):
+        st.markdown(
+            "Aérodromes / points de poser sans code ICAO publié (FOB, base militaire). "
+            "Ils restent en base après seed et sont utilisables comme origin/destination."
+        )
+        user_aps = db.list_user_airports()
+        if user_aps:
+            st.caption(f"{len(user_aps)} aérodrome(s) en base :")
+            for ap in user_aps:
+                cols = st.columns([3, 1])
+                with cols[0]:
+                    st.markdown(
+                        f"**{ap['icao']}** — {ap['name']}  "
+                        f"({ap['country_iso']})  ·  "
+                        f"`{ap['lat']:.4f}°, {ap['lon']:.4f}°`"
+                    )
+                with cols[1]:
+                    if st.button("🗑️", key=f"del_uap_{ap['icao']}", help="Supprimer"):
+                        db.delete_user_airport(ap["icao"])
+                        st.rerun()
+        else:
+            st.caption("Aucun aérodrome opérationnel en base.")
+        st.markdown("**Ajouter :**")
+        c1, c2 = st.columns(2)
+        with c1:
+            new_label = st.text_input(
+                "Identifiant (ex. TOUROU, KAINJI)",
+                key="uap_label",
+                help="Le nom court qu'utilisera l'agent comme origin/destination",
+            ).strip().upper()
+            new_name = st.text_input(
+                "Nom complet (ex. Kainji NAFB)", key="uap_name",
+            ).strip()
+            new_country = st.text_input(
+                "Pays (ISO 2-letter, ex. BJ, NG)", key="uap_country",
+                max_chars=2,
+            ).strip().upper()
+        with c2:
+            new_lat = st.number_input(
+                "Latitude (°N+ / S-)", value=0.0, format="%.6f", key="uap_lat",
+            )
+            new_lon = st.number_input(
+                "Longitude (°E+ / W-)", value=0.0, format="%.6f", key="uap_lon",
+            )
+            is_mil = st.checkbox("Militaire", value=True, key="uap_mil")
+        if new_label and new_name and st.button("💾 Sauver", key="uap_save"):
+            db.save_user_airport(
+                icao=new_label, name=new_name,
+                country_iso=new_country or "",
+                lat=float(new_lat), lon=float(new_lon),
+                is_military=is_mil,
+            )
+            st.success(f"Aérodrome {new_label} ajouté.")
+            st.rerun()
+
+    with st.expander("🌐 Autorouter API (suggestion approfondie)", expanded=True):
+        from app import autorouter_client
+        ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
+        if ar_cfg.is_configured():
+            st.caption(f"✓ Configuré — `{ar_cfg.base_url}`")
+            if st.button("🔌 Test connexion", key="ar_test"):
+                try:
+                    info = autorouter_client.ping_version(ar_cfg)
+                    st.success(
+                        f"API v{info.get('major')}.{info.get('minor')}.{info.get('patch')} "
+                        f"({'prod' if info.get('production') else 'sandbox'})"
+                    )
+                    try:
+                        autorouter_client._get_token(ar_cfg)
+                        st.success("Token OAuth obtenu — credentials valides.")
+                    except autorouter_client.AutorouterError as e:
+                        st.error(f"Token : {e}")
+                except autorouter_client.AutorouterError as e:
+                    st.error(str(e))
+        else:
+            st.caption(
+                "Pas configuré. Ajoute dans Streamlit Cloud → Settings → Secrets :"
+            )
+            st.code(
+                "[autorouter]\n"
+                'base_url = "https://api.autorouter.aero/v1.0"\n'
+                'token_url = "https://api.autorouter.aero/v1.0/oauth2/token"\n'
+                'client_id = "ton.email@example.org"\n'
+                'client_secret = "ton-mot-de-passe-autorouter"\n',
+                language="toml",
             )
 
     _step_nav_footer()

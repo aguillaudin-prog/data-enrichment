@@ -87,8 +87,8 @@ AIRCRAFT_TYPE_PERF = [
 
 DEFAULT_POCS = [
     {
-        "rank": "OF1",
-        "name": "MERLIN",
+        "rank": "OFFICIER",
+        "name": "TRANSIT",
         "phone": "+ 225 07 15 013 761",
         # The reference DICs surface this address under the (33) E-mail row,
         # which the docx generator reads from email_functional. Treat it as
@@ -160,6 +160,12 @@ def seed_aircraft_type_perf() -> None:
 
 
 def seed_pocs() -> None:
+    # One-shot cleanup of the legacy 'MERLIN' POC. The active operational
+    # POC is now 'OFFICIER TRANSIT' — the rename is a hard switch, the
+    # old MERLIN entry is removed so dropdowns don't show both.
+    removed = db.delete_poc_by_name("MERLIN")
+    if removed:
+        print(f"Removed legacy POC 'MERLIN' ({removed} row).")
     for p in DEFAULT_POCS:
         db.save_poc(
             rank=p["rank"], name=p["name"], phone=p["phone"],
