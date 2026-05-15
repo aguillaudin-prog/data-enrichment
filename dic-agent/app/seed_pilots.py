@@ -7,12 +7,14 @@ from __future__ import annotations
 from app import db
 
 AMAZONE = "AMAZONE AIRLINES / DYNAMI AVIATION OPS"
+REVOLUTION_AIR = "REVOLUTION'AIR"
 
 DEFAULT_PILOTS = [
     {"name": "Kornelius Wicaksono", "role": "CDB", "rank": "CPT", "operator": AMAZONE},
     {"name": "Aditya Tri Hertiawan", "role": "CDB", "rank": "CPT", "operator": AMAZONE},
     {"name": "Saba Muhammad", "role": "FO", "rank": "FO", "operator": AMAZONE},
     {"name": "Wanda Respati", "role": "FO", "rank": "FO", "operator": AMAZONE},
+    {"name": "Lazare Jean-Michel", "role": "CDB", "rank": "CPT", "operator": REVOLUTION_AIR},
 ]
 
 

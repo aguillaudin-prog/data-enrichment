@@ -19,7 +19,11 @@ import streamlit as st
 
 from app import db, docx_generator, fpl_exporter, route_engine, route_suggester
 
-st.set_page_config(page_title="DIC Agent", layout="wide")
+st.set_page_config(
+    page_title="DIC Agent",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 
 def _enforce_auth() -> None:
@@ -212,9 +216,14 @@ def _crew_picker(key_prefix: str, operator: str | None = None) -> dict:
             new_role = st.selectbox("Rôle", ["CDB", "FO"], key=f"{key_prefix}_new_pilot_role")
         with ac3:
             new_rank = st.text_input("Grade", value="CPT", key=f"{key_prefix}_new_pilot_rank")
+        if operator:
+            st.caption(f"Le pilote sera associé à la compagnie **{operator}** "
+                       f"(visible uniquement quand elle est sélectionnée).")
+        else:
+            st.caption("⚠ Sélectionne d'abord une compagnie pour associer le pilote.")
         if new_name and st.button("💾 Ajouter", key=f"{key_prefix}_save_pilot"):
-            db.save_pilot(new_name, new_role, new_rank or None)
-            st.success(f"Pilote {new_name} ({new_role}) ajouté.")
+            db.save_pilot(new_name, new_role, new_rank or None, allowed_operator=operator)
+            st.success(f"Pilote {new_name} ({new_role}) ajouté pour {operator or '(aucun opérateur)'}.")
             st.rerun()
 
     return {
@@ -226,6 +235,11 @@ def _crew_picker(key_prefix: str, operator: str | None = None) -> dict:
 
 
 def _poc_picker(key_prefix: str) -> dict:
+    """POC = Point Of Contact. Only 3 fields are exposed in the UI: name
+    (may include rank like 'OF1 MERLIN'), email fonctionnel, phone. Other
+    DB fields (email_personal, fax) are kept in schema but no longer
+    surfaced — they appeared in old reference DICs but the user wants a
+    streamlined form."""
     rows = db.list_pocs()
     options = ["— nouveau —"] + [f"{r['rank'] or ''} {r['name']}".strip() for r in rows]
     sel = st.selectbox("Profil POC", options, key=f"{key_prefix}_poc_sel")
@@ -239,25 +253,27 @@ def _poc_picker(key_prefix: str) -> dict:
             "email_functional": r["email_functional"] or "",
             "fax": r["fax"] or "",
         }
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
-        rank = st.text_input("Grade", key=f"{key_prefix}_poc_rank")
-        name = st.text_input("Nom prénom", key=f"{key_prefix}_poc_name")
-        phone = st.text_input("Téléphone", key=f"{key_prefix}_poc_phone")
+        name = st.text_input(
+            "POC (grade + nom, ex. OF1 MERLIN)", key=f"{key_prefix}_poc_name",
+        )
     with c2:
-        email_p = st.text_input("Email perso", key=f"{key_prefix}_poc_emailp")
         email_f = st.text_input("Email fonctionnel", key=f"{key_prefix}_poc_emailf")
-        fax = st.text_input("Fax", key=f"{key_prefix}_poc_fax")
+    with c3:
+        phone = st.text_input("Téléphone", key=f"{key_prefix}_poc_phone")
     if name and st.button("💾 Sauver POC", key=f"{key_prefix}_save_poc"):
-        db.save_poc(rank, name, phone, email_p, email_f, fax)
+        # rank stays in DB as separate column but isn't exposed in the UI
+        # any more; we store the full string in `name`.
+        db.save_poc("", name, phone, "", email_f, "")
         st.success("POC enregistré.")
         st.rerun()
     return {
-        "name": f"{rank} {name}".strip(),
+        "name": name,
         "phone": phone,
-        "email_personal": email_p,
+        "email_personal": "",
         "email_functional": email_f,
-        "fax": fax,
+        "fax": "",
     }
 
 
@@ -313,17 +329,30 @@ def _apt_input(label: str, default: str, field_key: str) -> str:
     Powered by streamlit-searchbox: as the user types, the dropdown right
     below the field is populated from the DB (ICAO prefix + name
     substring). Picking an entry sets the field to the airport's ICAO.
+
+    When `default` is non-empty (e.g. loaded from a saved mission template),
+    we display the airport label above the searchbox so the user sees what
+    was loaded. streamlit-searchbox's `default` parameter doesn't pre-fill
+    the visible search field, so without this caption the field looks
+    empty even though state holds a valid ICAO.
     """
     from streamlit_searchbox import st_searchbox
+    if default:
+        ap = db.find_airport(default)
+        if ap:
+            country = f" ({ap['country_iso']})" if ap['country_iso'] else ""
+            st.markdown(f"**{label}** : `{default}` · {ap['name']}{country}")
+        else:
+            st.markdown(f"**{label}** : `{default}` (inconnu en base)")
     selected = st_searchbox(
         _search_airports,
-        placeholder=f"{label} — tape ICAO ou nom (ex. EDDL, Düsseldorf)",
-        label=label,
-        default=default or None,
+        placeholder=f"Changer {label.lower()} — tape ICAO ou nom" if default else f"{label} — tape ICAO ou nom (ex. EDDL, Düsseldorf)",
+        label="" if default else label,
+        default=None,
         key=field_key,
         clear_on_submit=False,
     )
-    if isinstance(selected, str):
+    if isinstance(selected, str) and selected.strip():
         return selected.strip().upper()
     return (default or "").strip().upper()
 
@@ -469,6 +498,13 @@ def _leg_editor(idx: int, leg: dict) -> dict:
         ),
     )
 
+    alternate = st.text_input(
+        f"Alternate de {destination or 'destination'} (ICAO)",
+        value=leg.get("alternate", ""),
+        key=f"{kprefix}_alternate",
+        help="Aérodrome de déroutement si l'arrivée est impossible. Un par leg.",
+    ).strip().upper()
+
     msg = st.session_state.pop(f"_pending_suggest_msg_{sid}_{idx}", None)
     if msg:
         st.success(msg)
@@ -531,6 +567,7 @@ def _leg_editor(idx: int, leg: dict) -> dict:
         "eobt_time": t,
         "eobt": eobt,
         "route_text": route_text,
+        "alternate": alternate,
         "include_procedures": st.session_state.get(f"{kprefix}_inc_procs", True),
     }
 
@@ -624,7 +661,24 @@ with st.sidebar:
     )
 
 page_idx = st.session_state.page_idx
-st.markdown(f"### Étape {PAGES[page_idx][0]} {PAGES[page_idx][1]}")
+
+# Top horizontal nav — visible on mobile too (sidebar is collapsed on small
+# screens by default). Three big buttons, current step highlighted in primary.
+_top_cols = st.columns(len(PAGES))
+for i, (num, title, _sub) in enumerate(PAGES):
+    with _top_cols[i]:
+        is_current = (page_idx == i)
+        clicked = st.button(
+            f"{num} {title}",
+            key=f"topnav_{i}",
+            use_container_width=True,
+            type="primary" if is_current else "secondary",
+        )
+        if clicked:
+            _goto_page(i)
+            st.rerun()
+
+st.markdown(f"### {PAGES[page_idx][0]} {PAGES[page_idx][1]}")
 st.caption(PAGES[page_idx][2])
 st.divider()
 
@@ -693,7 +747,8 @@ if page_idx == 0:
 
     st.subheader("Vol")
     purpose = st.text_input("Purpose of flight", value="LOGISTIC FLIGHT WITHOUT DANGEROUS GOODS")
-    alternates = st.text_input("Alternates (ICAO list)", value="")
+    # Alternates moved to per-leg in the Legs tab (one alternate per arrival
+    # airport). We aggregate them at DIC-export time.
     radio_freq = st.text_input("Radio frequencies", value="VHF")
     n_passengers = st.text_input("Number of passengers", value="TBN")
     vip_title = st.text_input("VIP title/rank and name", value="NIL" if not has_vip else "TBN")
@@ -718,7 +773,8 @@ if page_idx == 0:
         "armament": armament,
         "ew": ew,
         "purpose": purpose,
-        "alternates": alternates,
+        # `alternates` is aggregated from per-leg entries at export time;
+        # see export logic that joins legs[*].alternate with " / ".
         "radio_frequencies": radio_freq,
         "n_passengers": n_passengers,
         "vip_title": vip_title,
@@ -837,7 +893,11 @@ if page_idx == 1:
             disabled=not cats,
         )
     with pc2:
-        filtered = tpl_rows if cat_sel == "— tous —" else by_cat.get(cat_sel, [])
+        # Strict filter: under "— tous —", hide all pre-filled templates.
+        # Templates surface only when their explicit dossier is selected.
+        # This avoids cluttering the new-user view with operator-specific
+        # pre-seeded missions they may not know about.
+        filtered = [] if cat_sel == "— tous —" else by_cat.get(cat_sel, [])
         tpl_options = [_NEW_MISSION_LABEL] + [r["name"] for r in filtered]
         sel_tpl = st.selectbox(
             "Mission",
@@ -957,6 +1017,13 @@ if page_idx == 2:
         if st.button("📄 Générer DIC .docx", type="primary"):
             if all_warnings:
                 st.warning("Des warnings subsistent — le doc sera généré mais à vérifier.")
+            # Aggregate per-leg alternates into the mission-level field expected
+            # by the docx template (one ' / '-separated string).
+            mission["alternates"] = " / ".join(
+                (leg.get("alternate") or "").strip().upper()
+                for leg in st.session_state.legs
+                if (leg.get("alternate") or "").strip()
+            )
             data = docx_generator.build_dic_document(mission, leg_payloads)
             fn_parts = [
                 "DIC",
@@ -1032,10 +1099,10 @@ if page_idx == 2:
                     if types and types[0]["wake_category"]:
                         wake = types[0]["wake_category"]
                 altn_codes = []
-                for tok in (mission.get("alternates") or "").split("/"):
-                    m = __import__("re").search(r"\b([A-Z]{4})\b", tok.upper())
-                    if m:
-                        altn_codes.append(m.group(1))
+                # Per-leg alternates: just use this leg's own one if set.
+                leg_alt = (leg.get("alternate") or "").strip().upper()
+                if leg_alt:
+                    altn_codes.append(leg_alt)
                 fpl = fpl_exporter.fpl_for_leg(
                     callsign=(mission.get("callsign") or "").replace("-", "") or "ZZZZZ",
                     aircraft_type=ap_type or "ZZZZ",
