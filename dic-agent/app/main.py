@@ -181,6 +181,8 @@ def _crew_picker(key_prefix: str, operator: str | None = None) -> dict:
 
     cdb_options = [f"{p['rank'] or ''} {p['name']}".strip() for p in cdbs] + ["— autre —"]
     fo_options = [f"{p['rank'] or ''} {p['name']}".strip() for p in fos] + ["— autre —", "— aucun —"]
+    cdb_label_to_name = {f"{p['rank'] or ''} {p['name']}".strip(): p["name"] for p in cdbs}
+    fo_label_to_name = {f"{p['rank'] or ''} {p['name']}".strip(): p["name"] for p in fos}
 
     c1, c2, c3 = st.columns([2, 2, 1])
     with c1:
@@ -188,7 +190,9 @@ def _crew_picker(key_prefix: str, operator: str | None = None) -> dict:
         if sel_cdb == "— autre —":
             cdb_text = st.text_input("CDB (saisie libre)", key=f"{key_prefix}_cdb_text").strip()
         else:
-            cdb_text = sel_cdb
+            # Strip rank from the display label — the reference DICs use just
+            # 'Aditya Tri Hertiawan' in (17), not 'CPT Aditya Tri Hertiawan'.
+            cdb_text = cdb_label_to_name.get(sel_cdb, sel_cdb)
     with c2:
         sel_fo = st.selectbox("Copilote (FO)", fo_options, key=f"{key_prefix}_fo_sel")
         if sel_fo == "— autre —":
@@ -196,7 +200,7 @@ def _crew_picker(key_prefix: str, operator: str | None = None) -> dict:
         elif sel_fo == "— aucun —":
             fo_text = ""
         else:
-            fo_text = sel_fo
+            fo_text = fo_label_to_name.get(sel_fo, sel_fo)
     with c3:
         n_crew = st.number_input(
             "N. crew",
@@ -235,46 +239,50 @@ def _crew_picker(key_prefix: str, operator: str | None = None) -> dict:
 
 
 def _poc_picker(key_prefix: str) -> dict:
-    """POC = Point Of Contact. Only 3 fields are exposed in the UI: name
-    (may include rank like 'OF1 MERLIN'), email fonctionnel, phone. Other
-    DB fields (email_personal, fax) are kept in schema but no longer
-    surfaced — they appeared in old reference DICs but the user wants a
-    streamlined form."""
+    """POC = Point Of Contact. Pick an existing one from the dropdown,
+    or use the '➕ Ajouter un POC' expander below to create a new one
+    that becomes available everywhere afterwards.
+
+    Only 3 fields are surfaced (name including rank, email fonctionnel,
+    phone) — the legacy email_personal / fax columns stay in the schema
+    for backward compatibility but aren't exposed."""
     rows = db.list_pocs()
-    options = ["— nouveau —"] + [f"{r['rank'] or ''} {r['name']}".strip() for r in rows]
-    sel = st.selectbox("Profil POC", options, key=f"{key_prefix}_poc_sel")
-    if sel != "— nouveau —":
-        idx = options.index(sel) - 1
-        r = rows[idx]
+    if not rows:
+        st.info("Aucun POC en base. Crée-en un via l'expander ci-dessous.")
+        chosen = None
+    else:
+        labels = [f"{r['rank'] or ''} {r['name']}".strip() for r in rows]
+        sel = st.selectbox("Profil POC", labels, key=f"{key_prefix}_poc_sel")
+        chosen = rows[labels.index(sel)] if sel else None
+
+    with st.expander("➕ Ajouter un POC en base"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            new_name = st.text_input(
+                "POC (grade + nom, ex. OF1 MERLIN)", key=f"{key_prefix}_poc_new_name",
+            )
+        with c2:
+            new_email = st.text_input(
+                "Email fonctionnel", key=f"{key_prefix}_poc_new_email",
+            )
+        with c3:
+            new_phone = st.text_input(
+                "Téléphone", key=f"{key_prefix}_poc_new_phone",
+            )
+        if new_name and st.button("💾 Sauver POC", key=f"{key_prefix}_save_poc"):
+            db.save_poc("", new_name, new_phone, "", new_email, "")
+            st.success(f"POC '{new_name}' enregistré.")
+            st.rerun()
+
+    if chosen is not None:
         return {
-            "name": f"{r['rank'] or ''} {r['name']}".strip(),
-            "phone": r["phone"] or "",
-            "email_personal": r["email_personal"] or "",
-            "email_functional": r["email_functional"] or "",
-            "fax": r["fax"] or "",
+            "name": f"{chosen['rank'] or ''} {chosen['name']}".strip(),
+            "phone": chosen["phone"] or "",
+            "email_personal": chosen["email_personal"] or "",
+            "email_functional": chosen["email_functional"] or "",
+            "fax": chosen["fax"] or "",
         }
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        name = st.text_input(
-            "POC (grade + nom, ex. OF1 MERLIN)", key=f"{key_prefix}_poc_name",
-        )
-    with c2:
-        email_f = st.text_input("Email fonctionnel", key=f"{key_prefix}_poc_emailf")
-    with c3:
-        phone = st.text_input("Téléphone", key=f"{key_prefix}_poc_phone")
-    if name and st.button("💾 Sauver POC", key=f"{key_prefix}_save_poc"):
-        # rank stays in DB as separate column but isn't exposed in the UI
-        # any more; we store the full string in `name`.
-        db.save_poc("", name, phone, "", email_f, "")
-        st.success("POC enregistré.")
-        st.rerun()
-    return {
-        "name": name,
-        "phone": phone,
-        "email_personal": "",
-        "email_functional": email_f,
-        "fax": "",
-    }
+    return {"name": "", "phone": "", "email_personal": "", "email_functional": "", "fax": ""}
 
 
 def _legs_sid() -> int:
@@ -781,7 +789,7 @@ if page_idx == 0:
     purpose = st.text_input("Purpose of flight", value="LOGISTIC FLIGHT WITHOUT DANGEROUS GOODS")
     # Alternates moved to per-leg in the Legs tab (one alternate per arrival
     # airport). We aggregate them at DIC-export time.
-    radio_freq = st.text_input("Radio frequencies", value="VHF")
+    radio_freq = st.text_input("Radio frequencies", value="V/U/HF")
     n_passengers = st.text_input("Number of passengers", value="TBN")
     vip_title = st.text_input("VIP title/rank and name", value="NIL" if not has_vip else "TBN")
     dg_details = st.text_input("DG details", value="NIL" if not has_dg else "TBN")
@@ -797,8 +805,10 @@ if page_idx == 0:
         "aircraft_type_icao": (ap.get("type_icao") or "").strip().upper(),
         "aircraft_count_type": f"1  {ap.get('type_icao','')}",
         "registration": ap.get("registration", ""),
-        "spare_aircraft": f"{ap.get('registration','')} OR SUBSTITUTE",
-        "callsign": ap.get("callsign", ""),
+        # Reference DICs use '/' for spare aircraft (no spare on file) and
+        # put the 'OR SUBSTITUTE' suffix in the callsign field instead.
+        "spare_aircraft": "/",
+        "callsign": f"{ap.get('callsign') or ap.get('registration','')} OR SUBSTITUTE".strip(),
         "n_crew": crew.get("n_crew", 2),
         "pilots": crew.get("pilots", ""),
         "sensors": sensors,
@@ -1036,14 +1046,9 @@ if page_idx == 2:
     mission = dict(st.session_state.mission)
     mission["departure_airport"] = " / ".join(departures)
     mission["destination_airport"] = " / ".join(destinations)
-    if date_range_min and date_range_max:
-        if date_range_min == date_range_max:
-            mission["date_of_flight"] = date_range_min.strftime("%d %b %Y").upper()
-        else:
-            mission["date_of_flight"] = (
-                f"{date_range_min.strftime('%d %b').upper()} TO "
-                f"{date_range_max.strftime('%d %b %Y').upper()}"
-            )
+    # date_of_flight is computed in docx_generator from per-leg EOBTs in the
+    # 'MAY 04 TO MAY 05, 2026' format expected by the reference DIC. We don't
+    # set it here so the generator's _format_date_of_flight always wins.
 
     st.divider()
     bc1, bc2 = st.columns(2)

@@ -87,8 +87,12 @@ DEFAULT_POCS = [
         "rank": "OF1",
         "name": "MERLIN",
         "phone": "+ 225 07 15 013 761",
-        "email_personal": "cos-det14.j10@intradef.gouv.fr",
-        "email_functional": "",
+        # The reference DICs surface this address under the (33) E-mail row,
+        # which the docx generator reads from email_functional. Treat it as
+        # the operational POC address (the personal address in the schema is
+        # legacy and no longer rendered).
+        "email_personal": "",
+        "email_functional": "cos-det14.j10@intradef.gouv.fr",
         "fax": "",
     },
 ]
