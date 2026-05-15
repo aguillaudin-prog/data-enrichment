@@ -695,3 +695,20 @@ def save_user_airport(icao: str, name: str, country_iso: str, lat: float, lon: f
             """,
             (icao.strip().upper(), name, country_iso, lat, lon, 1 if is_military else 0),
         )
+
+
+def list_user_airports() -> list[sqlite3.Row]:
+    """User-added operational aerodromes (FOB, military without ICAO)."""
+    with connect() as c:
+        return c.execute(
+            "SELECT icao, name, country_iso, lat, lon, is_military "
+            "FROM airport WHERE user_added = 1 ORDER BY icao"
+        ).fetchall()
+
+
+def delete_user_airport(icao: str) -> None:
+    with connect() as c:
+        c.execute(
+            "DELETE FROM airport WHERE icao = ? AND user_added = 1",
+            (icao.strip().upper(),),
+        )

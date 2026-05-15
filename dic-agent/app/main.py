@@ -706,8 +706,62 @@ with st.sidebar:
     # is now always used. Kept as a constant so downstream calls (format_zulu)
     # keep working without an inline string.
     template_format = "FRA"
+
+    # ── User airports management (FOB / military bases without ICAO) ──
+    with st.expander("🛩️ Aérodromes opérationnels (sans ICAO)"):
+        user_aps = db.list_user_airports()
+        if user_aps:
+            st.caption(f"{len(user_aps)} aérodrome(s) déjà en base :")
+            for ap in user_aps:
+                cols = st.columns([3, 1])
+                with cols[0]:
+                    st.markdown(
+                        f"**{ap['icao']}** — {ap['name']}  "
+                        f"({ap['country_iso']})  ·  "
+                        f"`{ap['lat']:.4f}°, {ap['lon']:.4f}°`"
+                    )
+                with cols[1]:
+                    if st.button("🗑️", key=f"del_uap_{ap['icao']}", help="Supprimer"):
+                        db.delete_user_airport(ap["icao"])
+                        st.rerun()
+        else:
+            st.caption("Aucun aérodrome opérationnel en base.")
+        st.markdown("**Ajouter :**")
+        c1, c2 = st.columns(2)
+        with c1:
+            new_label = st.text_input(
+                "Identifiant (ex. TOUROU, KAINJI)",
+                key="uap_label",
+                help="Le nom court qu'utilisera l'agent comme origin/destination",
+            ).strip().upper()
+            new_name = st.text_input(
+                "Nom complet (ex. Kainji NAFB)", key="uap_name",
+            ).strip()
+            new_country = st.text_input(
+                "Pays (ISO 2-letter, ex. BJ, NG)", key="uap_country",
+                max_chars=2,
+            ).strip().upper()
+        with c2:
+            new_lat = st.number_input(
+                "Latitude (°N+ / S-)", value=0.0, format="%.6f", key="uap_lat",
+            )
+            new_lon = st.number_input(
+                "Longitude (°E+ / W-)", value=0.0, format="%.6f", key="uap_lon",
+            )
+            is_mil = st.checkbox("Militaire", value=True, key="uap_mil")
+        if new_label and new_name and st.button("💾 Sauver", key="uap_save"):
+            db.save_user_airport(
+                icao=new_label, name=new_name,
+                country_iso=new_country or "",
+                lat=float(new_lat), lon=float(new_lon),
+                is_military=is_mil,
+            )
+            st.success(f"Aérodrome {new_label} ajouté.")
+            st.rerun()
+
+    st.divider()
     st.caption(
-        "Astuce : pour un point de coordonnées brutes, format "
+        "Astuce : pour un point de coordonnées brutes dans la route, format "
         "`N 9°34'45.56\" / E 3°14'7.09\"` ou `N9 34 45 / E3 14 7`."
     )
 
