@@ -85,6 +85,7 @@ def seed_airports() -> None:
                     "icao": icao,
                     "iata": (r.get("iata_code") or None) or None,
                     "name": r.get("name") or icao,
+                    "municipality": (r.get("municipality") or "").strip() or None,
                     "country_iso": (r.get("iso_country") or "").upper() or None,
                     "lat": lat,
                     "lon": lon,

@@ -84,20 +84,33 @@ _MONTHS_EN = {
 
 def _format_airport(icao: str) -> str:
     """Render an airport as 'CITY COUNTRY ICAO' — matches the reference DIC
-    column 23/24/25 format (e.g. 'COTONOU BENIN DBBB'). City is taken from
-    the first whitespace-separated word of the airport name; country name is
-    looked up via the country table from its ISO2 code. Returns the bare
-    ICAO if any lookup fails so we never lose the identifier."""
+    column 23/24/25 format (e.g. 'COTONOU BENIN DBBB').
+
+    City source priority:
+      1. `municipality` column (OurAirports field) — most reliable
+      2. First word of the airport `name` — fallback when municipality is
+         missing (e.g. user-added airports). Brittle for multi-word cities
+         or names that start with operator/honorific (Murtala, Nnamdi…).
+
+    Returns the bare ICAO if any lookup fails so we never lose the
+    identifier in the rendered DIC.
+    """
     icao = (icao or "").strip().upper()
     if not icao:
         return ""
     ap = db.find_airport(icao)
     if not ap:
         return icao
-    name = (ap["name"] or "").strip()
-    city = name.split()[0].upper() if name else ""
+    municipality = ""
+    try:
+        municipality = (ap["municipality"] or "").strip()
+    except (KeyError, IndexError):
+        municipality = ""
+    if not municipality:
+        name = (ap["name"] or "").strip()
+        municipality = name.split()[0] if name else ""
     country = db.find_country_name(ap["country_iso"]) if ap["country_iso"] else None
-    parts = [p for p in (city, (country or "").upper(), icao) if p]
+    parts = [p for p in (municipality.upper(), (country or "").upper(), icao) if p]
     return " ".join(parts)
 
 
@@ -303,16 +316,42 @@ def _build_fra_short(mission: dict, leg_data: list[dict]) -> bytes:
             _plain(row.cells[2], seg["route_in_country"])
             _plain(row.cells[3], f"{seg['exit_label']}\n{seg['exit_time_str']}")
 
-        # IN CASE OF EMERGENCY — diversion to alternate, per leg
+        # IN CASE OF EMERGENCY — diversion to the alternate.
+        # Reference layout (4 columns, italicised):
+        #   row N+0:   "IN CASE OF EMERGENCY"  spanning full width (label)
+        #   row N+1:   <country>  |  (empty)  |  DCT  |  <ICAO> <ETA>
+        # We don't have the navaid name near the alternate (would require a
+        # mapping table), so the route cell shows just 'DCT'. The ETA is the
+        # leg's destination ETA + 30 min as a rough estimate.
         alt = (leg.get("alternate") or "").strip().upper()
         if alt:
+            label_row = leg_tbl.add_row()
+            for c in label_row.cells:
+                _set_cell_bg(c, "FFF2CC")
+            label_cell = label_row.cells[0]
+            label_cell.merge(label_row.cells[1])
+            label_cell.merge(label_row.cells[2])
+            label_cell.merge(label_row.cells[3])
+            _bold(label_cell, "IN CASE OF EMERGENCY")
+
+            alt_ap = db.find_airport(alt)
+            alt_country = (
+                db.find_country_name(alt_ap["country_iso"])
+                if alt_ap and alt_ap["country_iso"] else ""
+            )
+            # Estimate ETA: take the leg's destination ETA from the last
+            # segment exit time and add 30 min for the divert.
+            eta_str = ""
+            if leg.get("segments"):
+                last_seg = leg["segments"][-1]
+                eta_str = last_seg.get("exit_time_str") or ""
             row = leg_tbl.add_row()
             for c in row.cells:
                 _set_cell_bg(c, "FFF2CC")
-            _bold(row.cells[0], "IN CASE OF EMERGENCY")
+            _plain(row.cells[0], (alt_country or "—").upper())
             _plain(row.cells[1], "")
-            _plain(row.cells[2], f"DCT {alt}")
-            _plain(row.cells[3], _format_airport(alt))
+            _plain(row.cells[2], "DCT")
+            _plain(row.cells[3], f"{alt}  {eta_str}".strip())
         _set_widths(leg_tbl, [3.0, 4.5, 5.5, 4.5])
         doc.add_paragraph()
 

@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS airport (
     icao TEXT PRIMARY KEY,
     iata TEXT,
     name TEXT NOT NULL,
+    municipality TEXT,
     country_iso TEXT,
     lat REAL NOT NULL,
     lon REAL NOT NULL,
@@ -195,6 +196,10 @@ def _migrate(conn) -> None:
             conn.execute("ALTER TABLE aircraft_type ADD COLUMN approach_cat TEXT")
         if "climb_gradient_pct" not in ac_cols:
             conn.execute("ALTER TABLE aircraft_type ADD COLUMN climb_gradient_pct REAL")
+    cur = conn.execute("PRAGMA table_info(airport)")
+    apt_cols = {row[1] for row in cur.fetchall()}
+    if apt_cols and "municipality" not in apt_cols:
+        conn.execute("ALTER TABLE airport ADD COLUMN municipality TEXT")
 
 
 def init_schema() -> None:
@@ -205,17 +210,21 @@ def init_schema() -> None:
 
 def upsert_airports(rows: Iterable[dict]) -> int:
     sql = """
-    INSERT INTO airport (icao, iata, name, country_iso, lat, lon, elevation_ft, is_military, user_added)
-    VALUES (:icao, :iata, :name, :country_iso, :lat, :lon, :elevation_ft, :is_military, :user_added)
+    INSERT INTO airport (icao, iata, name, municipality, country_iso, lat, lon,
+                         elevation_ft, is_military, user_added)
+    VALUES (:icao, :iata, :name, :municipality, :country_iso, :lat, :lon,
+            :elevation_ft, :is_military, :user_added)
     ON CONFLICT(icao) DO UPDATE SET
-        iata=excluded.iata, name=excluded.name, country_iso=excluded.country_iso,
+        iata=excluded.iata, name=excluded.name, municipality=excluded.municipality,
+        country_iso=excluded.country_iso,
         lat=excluded.lat, lon=excluded.lon, elevation_ft=excluded.elevation_ft,
         is_military=excluded.is_military
     """
     n = 0
     with connect() as c:
         for r in rows:
-            c.execute(sql, r)
+            row = {"municipality": None, **r}
+            c.execute(sql, row)
             n += 1
     return n
 
