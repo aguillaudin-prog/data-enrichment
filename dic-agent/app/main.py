@@ -119,13 +119,22 @@ def _operator_picker(key_prefix: str) -> str | None:
 
 def _aircraft_picker(key_prefix: str, operator: str | None = None) -> dict:
     rows = db.list_aircraft(operator=operator)
-    options = ["— nouveau —"] + [
+    aircraft_options = [
         f"{r['registration']} / {r['type_icao'] or '?'}" for r in rows
     ]
+    options = aircraft_options + ["— nouveau —"]
     label = f"Appareil ({operator})" if operator else "Appareil"
-    sel = st.selectbox(label, options, key=f"{key_prefix}_ap_sel")
+    # Default to the first real aircraft when the operator has any. The old
+    # default '— nouveau —' silently left registration/type/callsign empty
+    # in the generated DIC if the user didn't actively pick one (the bug
+    # the user spotted: '(12) 01' / '(13) empty' / '(15) OR SUBSTITUTE').
+    if rows:
+        default_idx = 0
+    else:
+        default_idx = 0  # only '— nouveau —' available
+    sel = st.selectbox(label, options, index=default_idx, key=f"{key_prefix}_ap_sel")
     if sel != "— nouveau —":
-        idx = options.index(sel) - 1
+        idx = options.index(sel)
         r = rows[idx]
         st.caption(
             f"reg `{r['registration']}` • type `{r['type_icao']}` • callsign `{r['callsign']}` • op `{r['operator']}`"
@@ -140,7 +149,7 @@ def _aircraft_picker(key_prefix: str, operator: str | None = None) -> dict:
     with c1:
         reg = st.text_input("Immatriculation", key=f"{key_prefix}_reg").strip().upper()
         type_icao = st.text_input(
-            "Type ICAO (ex. DHC6, A400, B738…)", key=f"{key_prefix}_type"
+            "Type ICAO (ex. DHC6-400, A400, B738…)", key=f"{key_prefix}_type"
         ).strip().upper()
     with c2:
         callsign = st.text_input("Callsign", key=f"{key_prefix}_cs").strip().upper()
