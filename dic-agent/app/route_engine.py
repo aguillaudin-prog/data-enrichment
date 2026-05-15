@@ -278,6 +278,60 @@ def _country_at(lat: float, lon: float, idx) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _fill_oceanic_samples(
+    samples: list[tuple[float, tuple[float, float], str | None, str | None]],
+) -> list[tuple[float, tuple[float, float], str | None, str | None]]:
+    """Replace 'no country' samples (over water) with the nearest land
+    neighbour along the route, in either direction.
+
+    Natural Earth polygons cover land only. When the great-circle dips
+    over water (gulf, sea, ocean), `_country_at` returns (None, None).
+    For diplomatic-clearance purposes that's useless ('Unknown' country
+    in the DIC). Operationally, oceanic FIRs are extensions of coastal
+    countries' airspace, so attributing offshore samples to the closest
+    coastal country is a reasonable proxy.
+
+    Strategy: for each unknown sample, find the nearest known sample
+    forward and backward in the list. Whichever is closer (in number of
+    sample-steps along the route) wins. For a Ghana → ocean → Côte
+    d'Ivoire crossing, oceanic samples split at the midpoint.
+    """
+    n = len(samples)
+    if n == 0:
+        return samples
+    # Index of the nearest known sample going FORWARD from each position
+    next_known: list[int | None] = [None] * n
+    nxt = None
+    for i in range(n - 1, -1, -1):
+        if samples[i][2] is not None:
+            nxt = i
+        next_known[i] = nxt
+    prev_known: list[int | None] = [None] * n
+    prv = None
+    for i in range(n):
+        if samples[i][2] is not None:
+            prv = i
+        prev_known[i] = prv
+    out: list[tuple[float, tuple[float, float], str | None, str | None]] = []
+    for i, (f, pt, iso, name) in enumerate(samples):
+        if iso is not None:
+            out.append((f, pt, iso, name))
+            continue
+        forward_idx = next_known[i]
+        backward_idx = prev_known[i]
+        forward_dist = (forward_idx - i) if forward_idx is not None else float("inf")
+        backward_dist = (i - backward_idx) if backward_idx is not None else float("inf")
+        if backward_dist <= forward_dist and backward_idx is not None:
+            chosen = samples[backward_idx]
+        elif forward_idx is not None:
+            chosen = samples[forward_idx]
+        else:
+            out.append((f, pt, iso, name))
+            continue
+        out.append((f, pt, chosen[2], chosen[3]))
+    return out
+
+
 def _sample_country_along(
     p1: tuple[float, float], p2: tuple[float, float], idx, samples: int = 80
 ) -> list[tuple[float, tuple[float, float], str | None, str | None]]:
@@ -287,7 +341,7 @@ def _sample_country_along(
         lat, lon = _interp_great_circle(p1, p2, f)
         iso, name = _country_at(lat, lon, idx)
         out.append((f, (lat, lon), iso, name))
-    return out
+    return _fill_oceanic_samples(out)
 
 
 def compute_leg(
