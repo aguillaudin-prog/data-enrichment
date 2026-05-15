@@ -286,6 +286,63 @@ def _cleanup_legacy() -> None:
         print(f"Removed legacy POC 'MERLIN' ({removed} row).")
 
 
+def refresh_municipalities() -> None:
+    """Backfill airport.municipality from a fresh OurAirports CSV.
+
+    L'auto-complétion par ville ('bamak' → GABS Bamako) ne marche que si
+    la colonne municipality est peuplée. Anciennes DBs ne l'avaient pas
+    et seed_profiles ne re-télécharge pas le bundle complet seed_db
+    (~150 Mo). Cette fonction télécharge UNIQUEMENT airports.csv (~10 Mo)
+    et UPDATE municipality pour les lignes existantes — rapide et sûr.
+
+    Skip silencieusement si municipality est déjà majoritairement remplie
+    (>50 % des lignes), pour ne pas re-télécharger à chaque seed.
+    """
+    import csv as _csv
+    import urllib.request as _ur
+
+    with db.connect() as c:
+        total = c.execute("SELECT COUNT(*) FROM airport").fetchone()[0]
+        with_muni = c.execute(
+            "SELECT COUNT(*) FROM airport WHERE municipality IS NOT NULL AND TRIM(municipality) != ''"
+        ).fetchone()[0]
+    if total == 0:
+        print("  airport table vide — skip refresh_municipalities.")
+        return
+    if total and with_muni / total > 0.5:
+        print(f"  municipality déjà rempli ({with_muni}/{total}) — skip refresh.")
+        return
+
+    print(f"  municipality manquant ({with_muni}/{total}) — téléchargement OurAirports…")
+    url = "https://davidmegginson.github.io/ourairports-data/airports.csv"
+    target = SEEDS_DIR / "airports.csv"
+    try:
+        SEEDS_DIR.mkdir(parents=True, exist_ok=True)
+        _ur.urlretrieve(url, target)
+    except Exception as e:
+        print(f"  échec téléchargement airports.csv : {e}")
+        return
+
+    updates: list[tuple[str, str]] = []
+    with target.open(newline="", encoding="utf-8") as f:
+        for r in _csv.DictReader(f):
+            icao = (r.get("ident") or "").strip().upper()
+            muni = (r.get("municipality") or "").strip() or None
+            if icao and muni:
+                updates.append((muni, icao))
+
+    n = 0
+    with db.connect() as c:
+        for muni, icao in updates:
+            cur = c.execute(
+                "UPDATE airport SET municipality = ? "
+                "WHERE icao = ? AND (municipality IS NULL OR TRIM(municipality) = '')",
+                (muni, icao),
+            )
+            n += cur.rowcount
+    print(f"  municipality mis à jour pour {n} aérodromes.")
+
+
 def main() -> int:
     db.init_schema()
     _cleanup_legacy()
@@ -297,6 +354,7 @@ def main() -> int:
     seed_extra_waypoints()
     seed_route_templates()
     reclassify_divers()
+    refresh_municipalities()
     print("\nAll profile seeds done.")
     return 0
 

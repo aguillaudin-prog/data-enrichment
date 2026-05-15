@@ -398,23 +398,26 @@ def default_alternate_for(destination_icao: str) -> str | None:
 
 
 def find_airports_by_name_substring(query: str, limit: int = 15) -> list[sqlite3.Row]:
-    """Airports whose name OR municipality contains `query` (case-insensitive).
+    """Airports whose name, municipality OR iata code contains `query`
+    (case-insensitive).
 
-    Fallback for type-ahead when the user types a city or country-airport name
-    instead of an ICAO prefix. OurAirports stores 'Bamako' under
-    municipality and 'Modibo Keita International Airport' under name —
-    matching on both means typing 'Bamako' lands on GABS as expected.
-    Ordered by ICAO so output is deterministic."""
+    Fallback for type-ahead when the user types a city, IATA code, or
+    airport name instead of an ICAO prefix. OurAirports stores 'Bamako'
+    under municipality, 'BKO' under iata, 'Modibo Keita International
+    Airport' under name — matching on all three covers every common
+    way to look up an airport. Ordered by ICAO so output is
+    deterministic."""
     query = query.strip()
     if not query:
         return []
     with connect() as c:
         return c.execute(
-            "SELECT icao, name, country_iso, municipality FROM airport "
+            "SELECT icao, name, country_iso, municipality, iata FROM airport "
             "WHERE name LIKE ? COLLATE NOCASE "
             "   OR municipality LIKE ? COLLATE NOCASE "
+            "   OR iata LIKE ? COLLATE NOCASE "
             "ORDER BY icao LIMIT ?",
-            (f"%{query}%", f"%{query}%", limit),
+            (f"%{query}%", f"%{query}%", f"%{query}%", limit),
         ).fetchall()
 
 
