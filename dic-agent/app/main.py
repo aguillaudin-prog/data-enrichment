@@ -774,14 +774,10 @@ if page_idx == 0:
     poc = _poc_picker("mission")
 
     st.divider()
-    # Indicateurs (sensors / armament / EW / VIP / DG) used to live here as a
-    # five-checkbox row but every reference DIC the user has shipped to date
-    # ticks 'NO' on the three first and 'NIL' on the two last. Removed from
-    # the form — defaults fall through in the docx generator. If a real
-    # operational change is needed, add the checkboxes back here.
-    sensors = "NO"
-    armament = "NO"
-    ew = "NO"
+    # Indicateurs (sensors / armament / EW / VIP / DG) used to live here as
+    # a five-checkbox row. Removed entirely: every reference DIC defaults to
+    # NO/NIL and the user now puts any exceptional info (VIP onboard, DG,
+    # sensitive equipment) directly in the Remarks block (30).
 
     st.subheader("Vol")
     purpose = st.text_input("Purpose of flight", value="LOGISTIC FLIGHT WITHOUT DANGEROUS GOODS")
@@ -789,8 +785,6 @@ if page_idx == 0:
     # airport). We aggregate them at DIC-export time.
     radio_freq = st.text_input("Radio frequencies", value="V/U/HF")
     n_passengers = st.text_input("Number of passengers", value="TBN")
-    vip_title = "NIL"
-    dg_details = "NIL"
     remarks = st.text_area("Remarks", value="")
 
     st.session_state.mission = {
@@ -809,16 +803,11 @@ if page_idx == 0:
         "callsign": f"{ap.get('callsign') or ap.get('registration','')} OR SUBSTITUTE".strip(),
         "n_crew": crew.get("n_crew", 2),
         "pilots": crew.get("pilots", ""),
-        "sensors": sensors,
-        "armament": armament,
-        "ew": ew,
         "purpose": purpose,
         # `alternates` is aggregated from per-leg entries at export time;
         # see export logic that joins legs[*].alternate with " / ".
         "radio_frequencies": radio_freq,
         "n_passengers": n_passengers,
-        "vip_title": vip_title,
-        "dg_details": dg_details,
         "remarks": remarks,
         "poc_name": poc.get("name", ""),
         "poc_phone": poc.get("phone", ""),

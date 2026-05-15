@@ -244,9 +244,9 @@ def _build_dic(mission: dict, leg_data: list[dict]) -> bytes:
         n_crew_str = str(n_crew or "")
     _info("(16)", "Number of crew members", n_crew_str)
     _info("(17)", "Pilot rank and name", mission.get("pilots", ""))
-    _info("(18)", "Photographic sensors and/or cameras", mission.get("sensors", "NO"))
-    _info("(19)", "Armament", mission.get("armament", "NO"))
-    _info("(20)", "Electronic warfare equipment", mission.get("ew", "NO"))
+    # (18)..(20) Photographic sensors / Armament / EW — removed per user
+    # request. If a future mission needs to disclose them, the user adds
+    # the info to the Remarks (30) field instead.
 
     # Flight details (21..26)
     _section("FLIGHT DETAILS (Detailed routing in Appendix 1)")
@@ -261,11 +261,11 @@ def _build_dic(mission: dict, leg_data: list[dict]) -> bytes:
     _info("(25)", "Alternate airport(s)", _format_airports_list(alternates))
     _info("(26)", "Radio frequencies", mission.get("radio_frequencies") or "V/U/HF")
 
-    # Load information (27..29)
+    # Load information (27..29) — only the passenger count is exposed.
+    # (28) VIP and (29) DG removed per user request: when a flight actually
+    # carries a VIP or DG, the operator surfaces it in the Remarks block.
     _section("LOAD INFORMATION")
     _info("(27)", "Number of passengers", mission.get("n_passengers", "TBN"))
-    _info("(28)", "VIP title/rank and name", mission.get("vip_title", "NIL"))
-    _info("(29)", "DG details", mission.get("dg_details", "NIL"))
 
     # Remarks (30)
     _section("REMARKS")
