@@ -126,12 +126,12 @@
     ]
   },
   {
-    "name": "BÉNIN / TOUROU → KAINJI NAFB → TOUROU",
+    "name": "BÉNIN / DBBP → DNKA → DBBP (Tourou → Kainji NAFB → Tourou)",
     "category": "Bénin",
     "legs": [
       {
         "order": 1,
-        "origin": "TOUROU",
+        "origin": "DBBP",
         "destination": "DNKA",
         "route_text": "DCT",
         "fl": 90,
@@ -141,7 +141,7 @@
       {
         "order": 2,
         "origin": "DNKA",
-        "destination": "TOUROU",
+        "destination": "DBBP",
         "route_text": "DCT",
         "fl": 100,
         "tas": 140,

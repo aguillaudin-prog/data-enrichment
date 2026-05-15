@@ -86,12 +86,7 @@ def _format_airport(icao: str) -> str:
     """Render an airport as 'CITY COUNTRY ICAO' — matches the reference DIC
     column 23/24/25 format (e.g. 'COTONOU BENIN DBBB').
 
-    Special case for user-added airports (forward operating locations like
-    TOUROU): when the airport's name equals its 'ICAO' label (i.e. the
-    user-added entry where name is the operational label), we render just
-    that label once — 'TOUROU' not 'TOUROU BENIN TOUROU'.
-
-    City source priority for standard airports:
+    City source priority:
       1. `municipality` column (OurAirports field) — most reliable
       2. First word of the airport `name` — fallback when municipality is
          missing. Brittle for multi-word cities or names that start with
@@ -106,17 +101,13 @@ def _format_airport(icao: str) -> str:
     ap = db.find_airport(icao)
     if not ap:
         return icao
-    name = (ap["name"] or "").strip()
-    # User-added operational labels (TOUROU, BORDER POST X, …) where the
-    # 'name' is identical to the 'ICAO' label modulo case — render once.
-    if name.upper() == icao:
-        return icao
     municipality = ""
     try:
         municipality = (ap["municipality"] or "").strip()
     except (KeyError, IndexError):
         municipality = ""
     if not municipality:
+        name = (ap["name"] or "").strip()
         municipality = name.split()[0] if name else ""
     country = db.find_country_name(ap["country_iso"]) if ap["country_iso"] else None
     parts = [p for p in (municipality.upper(), (country or "").upper(), icao) if p]

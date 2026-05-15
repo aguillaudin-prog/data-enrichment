@@ -112,37 +112,6 @@ def seed_aircraft() -> None:
     print(f"Seeded {len(DEFAULT_AIRCRAFT)} aircraft profiles.")
 
 
-# User-added 'airports' that don't have a published ICAO code: forward
-# operating locations, helipads, military landing strips named in the
-# operational DICs. Inserted via save_user_airport with user_added=1 so
-# the regular OurAirports seed never overwrites them.
-USER_AIRPORTS = [
-    {
-        # Forward operating point in north-east Bénin, near the Nigeria
-        # border. Used as the Bénin-side leg endpoint for tactical
-        # cross-border flights toward Kainji NAFB. Reference DICs label
-        # the entry/exit point as the border coordinate
-        # N 9°34'45.56" / E 3°14'7.09"; we store TOUROU at that location
-        # so the agent can compute great-circle distances correctly.
-        "icao": "TOUROU",
-        "name": "Tourou",
-        "country_iso": "BJ",
-        "lat": 9 + 34 / 60 + 45.56 / 3600,   # 9.579322
-        "lon": 3 + 14 / 60 + 7.09 / 3600,    # 3.235303
-        "is_military": True,
-    },
-]
-
-
-def seed_user_airports() -> None:
-    for ap in USER_AIRPORTS:
-        db.save_user_airport(
-            icao=ap["icao"], name=ap["name"], country_iso=ap["country_iso"],
-            lat=ap["lat"], lon=ap["lon"], is_military=ap.get("is_military", True),
-        )
-    print(f"Seeded {len(USER_AIRPORTS)} user-added airports (TOUROU, …).")
-
-
 def seed_aircraft_type_perf() -> None:
     n = db.upsert_aircraft_types(AIRCRAFT_TYPE_PERF)
     print(f"Seeded perf data for {n} aircraft types.")
@@ -251,7 +220,6 @@ def main() -> int:
     seed_pilots.main()
     seed_aircraft_type_perf()
     seed_aircraft()
-    seed_user_airports()
     seed_pocs()
     seed_extra_waypoints()
     seed_route_templates()
