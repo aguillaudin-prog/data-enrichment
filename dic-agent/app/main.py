@@ -27,53 +27,22 @@ st.set_page_config(
 )
 
 
-def _enforce_auth() -> None:
-    """Streamlit Cloud login gate.
-
-    Reads the user/password matrix from `st.secrets` (set in the Streamlit
-    Cloud Secrets UI for the deployed app, or in `.streamlit/secrets.toml`
-    locally). If secrets are absent entirely, auth is bypassed — useful
-    for local dev. On the deployed app the secrets are set, so every visit
-    requires login.
-    """
+def _show_logged_in_user() -> None:
+    """L'auth est gérée par Streamlit Community Cloud (Settings → Sharing →
+    Only specific people, allowlist d'emails Google). Streamlit injecte
+    l'email de l'utilisateur connecté dans st.experimental_user — on
+    l'affiche en sidebar pour confirmer qui est en session. Pas d'appel
+    requis si l'allowlist n'est pas activée (mode dev local)."""
     try:
-        has_users = "users" in st.secrets
+        email = getattr(st.experimental_user, "email", None) if hasattr(st, "experimental_user") else None
     except Exception:
-        has_users = False  # no secrets.toml at all → local dev mode
-    if not has_users:
-        return
-    import streamlit_authenticator as stauth
-    credentials = {
-        "usernames": {
-            uname: {
-                "email": data.get("email", ""),
-                "name": data.get("name", uname),
-                "password": data["password_hash"],
-            }
-            for uname, data in st.secrets["users"].items()
-        }
-    }
-    cookie = st.secrets.get("cookie", {"name": "dic_auth", "key": "change_me", "expiry_days": 7})
-    authenticator = stauth.Authenticate(
-        credentials,
-        cookie.get("name", "dic_auth"),
-        cookie.get("key", "change_me"),
-        int(cookie.get("expiry_days", 7)),
-    )
-    authenticator.login(location="main", fields={"Form name": "Connexion DIC Agent"})
-    status = st.session_state.get("authentication_status")
-    if status is False:
-        st.error("Identifiants incorrects.")
-        st.stop()
-    if status is None:
-        st.warning("Connecte-toi pour accéder à l'agent.")
-        st.stop()
-    with st.sidebar:
-        st.caption(f"👤 Connecté : **{st.session_state.get('name', '')}**")
-        authenticator.logout("Déconnexion", "sidebar")
+        email = None
+    if email:
+        with st.sidebar:
+            st.caption(f"👤 Connecté : **{email}**")
 
 
-_enforce_auth()
+_show_logged_in_user()
 
 DB_FILE = Path(__file__).resolve().parent.parent / "data" / "dic.sqlite"
 if not DB_FILE.exists():
