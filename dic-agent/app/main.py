@@ -334,7 +334,18 @@ def _search_airports(query: str) -> list[tuple[str, str]]:
             if m["icao"] in seen:
                 continue
             seen.add(m["icao"])
-            label = f"{m['icao']}  ·  {m['name']}"
+            # When the match is on municipality (city), surface the city
+            # alongside the airport name so the user knows why this row showed
+            # up. find_airports_by_name_substring matches either column.
+            muni = None
+            try:
+                muni = m["municipality"]
+            except (KeyError, IndexError):
+                muni = None
+            if muni and q in muni.upper() and q not in (m["name"] or "").upper():
+                label = f"{m['icao']}  ·  {m['name']}  · _{muni}_"
+            else:
+                label = f"{m['icao']}  ·  {m['name']}"
             if m["country_iso"]:
                 label += f"  ({m['country_iso']})"
             results.append((label, m["icao"]))
