@@ -39,6 +39,15 @@ COORD_PATTERN = (
 COORD_RE = re.compile(rf"^{COORD_PATTERN}$", re.IGNORECASE | re.VERBOSE)
 COORD_FINDER = re.compile(COORD_PATTERN, re.IGNORECASE)
 
+# ICAO compact coordinate format used in flight plans / autorouter output :
+#   DDMM[SS]<N|S>DDDMM[SS]<E|W>
+# Examples : 4334N00650E (no seconds), 433407N0065031E (with seconds).
+ICAO_COORD_RE = re.compile(
+    r"^(\d{2})(\d{2})(\d{2})?([NS])"
+    r"(\d{3})(\d{2})(\d{2})?([EW])$",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class ResolvedPoint:
@@ -73,17 +82,28 @@ class LegResolution:
 
 
 def _parse_coord(token: str) -> tuple[float, float] | None:
-    m = COORD_RE.match(token.strip().upper())
-    if not m:
-        return None
-    ns, d_lat, m_lat, s_lat, ew, d_lon, m_lon, s_lon = m.groups()
-    lat = int(d_lat) + (int(m_lat) / 60 if m_lat else 0) + (float(s_lat) / 3600 if s_lat else 0)
-    lon = int(d_lon) + (int(m_lon) / 60 if m_lon else 0) + (float(s_lon) / 3600 if s_lon else 0)
-    if ns.upper() == "S":
-        lat = -lat
-    if ew.upper() == "W":
-        lon = -lon
-    return lat, lon
+    t = token.strip().upper()
+    m = COORD_RE.match(t)
+    if m:
+        ns, d_lat, m_lat, s_lat, ew, d_lon, m_lon, s_lon = m.groups()
+        lat = int(d_lat) + (int(m_lat) / 60 if m_lat else 0) + (float(s_lat) / 3600 if s_lat else 0)
+        lon = int(d_lon) + (int(m_lon) / 60 if m_lon else 0) + (float(s_lon) / 3600 if s_lon else 0)
+        if ns.upper() == "S":
+            lat = -lat
+        if ew.upper() == "W":
+            lon = -lon
+        return lat, lon
+    m = ICAO_COORD_RE.match(t)
+    if m:
+        d_lat, mi_lat, s_lat, ns, d_lon, mi_lon, s_lon, ew = m.groups()
+        lat = int(d_lat) + int(mi_lat) / 60 + (int(s_lat) / 3600 if s_lat else 0)
+        lon = int(d_lon) + int(mi_lon) / 60 + (int(s_lon) / 3600 if s_lon else 0)
+        if ns == "S":
+            lat = -lat
+        if ew == "W":
+            lon = -lon
+        return lat, lon
+    return None
 
 
 def _great_circle_nm(p1: tuple[float, float], p2: tuple[float, float]) -> float:
