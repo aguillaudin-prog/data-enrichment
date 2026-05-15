@@ -301,6 +301,25 @@ def _country_at(lat: float, lon: float, idx) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _country_for_point(rp, idx) -> tuple[str | None, str | None]:
+    """Prefer the ResolvedPoint's own country_iso (set by db.find_airport /
+    find_waypoints_all) over a polygon lookup. Natural Earth polygons can
+    have edge gaps (notably along complex coastlines), and the airport
+    DB's ISO is authoritative for published airports.
+
+    Falls back to polygon lookup when the ResolvedPoint has no country_iso
+    (e.g. inline coordinates emitted by autorouter)."""
+    iso = getattr(rp, "country_iso", None)
+    if iso:
+        for ci_iso, ci_name, _ in idx:
+            if ci_iso == iso:
+                return iso, ci_name
+        # ISO known but not in the Natural Earth index — surface it anyway,
+        # using the ISO as display name (better than Unknown).
+        return iso, iso
+    return _country_at(rp.lat, rp.lon, idx)
+
+
 def _fill_oceanic_samples(
     samples: list[tuple[float, tuple[float, float], str | None, str | None]],
 ) -> list[tuple[float, tuple[float, float], str | None, str | None]]:
@@ -408,7 +427,7 @@ def compute_leg(
     cur_iso = None
     cur_name = None
     cur_pt = (coord_points[0].lat, coord_points[0].lon)
-    cur_iso, cur_name = _country_at(cur_pt[0], cur_pt[1], country_index)
+    cur_iso, cur_name = _country_for_point(coord_points[0], country_index)
     crossings.append(("origin", cur_iso, cur_name, eobt, cur_pt))
 
     for i in range(1, len(coord_points)):
@@ -429,7 +448,7 @@ def compute_leg(
 
     t_end = eobt + dt.timedelta(minutes=res.total_time_min)
     end_pt = (coord_points[-1].lat, coord_points[-1].lon)
-    end_iso, end_name = _country_at(end_pt[0], end_pt[1], country_index)
+    end_iso, end_name = _country_for_point(coord_points[-1], country_index)
     crossings.append(("destination", end_iso, end_name, t_end, end_pt))
 
     segments: list[StateSegment] = []
