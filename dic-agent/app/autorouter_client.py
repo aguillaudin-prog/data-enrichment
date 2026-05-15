@@ -181,6 +181,70 @@ def ping_version(cfg: AutorouterConfig) -> dict:
     return resp.json()
 
 
+def list_aircraft_templates(cfg: AutorouterConfig) -> list[dict]:
+    """GET /aircraft/templates — les profils appareils créés par l'utilisateur
+    dans son compte autorouter. On les utilise pour matcher par type ICAO
+    (au lieu du fallback P28R par défaut) : un DHC6/DA62/L410 a une perf
+    radicalement différente, et autorouter peut refuser une route si le
+    profil ne tient pas la distance/FL."""
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/aircraft/templates",
+            headers=_auth_headers(cfg), timeout=20,
+        )
+    except requests.exceptions.RequestException as e:
+        raise AutorouterError(f"network: {e}")
+    if resp.status_code != 200:
+        raise AutorouterError(
+            f"GET /aircraft/templates HTTP {resp.status_code}: {resp.text[:300]}"
+        )
+    try:
+        data = resp.json()
+    except ValueError:
+        return []
+    if isinstance(data, list):
+        return [t for t in data if isinstance(t, dict)]
+    if isinstance(data, dict) and "templates" in data:
+        return [t for t in data["templates"] if isinstance(t, dict)]
+    return []
+
+
+def find_template_id_for_type(cfg: AutorouterConfig, icao_type: str) -> int | None:
+    """Look up the aircraft template ID best matching `icao_type`.
+
+    Matching is case-insensitive and tolerates the DHC6-400 vs DHC6 split
+    (compares first 4 letters of the type code). Returns None if no match
+    so the caller falls back to autorouter's built-in P28R (aircraftid=0).
+    """
+    if not icao_type:
+        return None
+    needle = icao_type.strip().upper()
+    try:
+        templates = list_aircraft_templates(cfg)
+    except AutorouterError:
+        return None
+    if not templates:
+        return None
+    # Strong match: exact ICAO designator
+    for t in templates:
+        for key in ("icao", "icaoid", "type", "icaotype", "designator"):
+            v = (t.get(key) or "").upper().strip()
+            if v and v == needle:
+                tid = t.get("id") or t.get("aircraftid") or t.get("templateid")
+                if tid is not None:
+                    return int(tid)
+    # Weak match: same first 4 letters (DHC6-400 ↔ DHC6)
+    needle4 = needle[:4]
+    for t in templates:
+        for key in ("icao", "icaoid", "type", "icaotype", "designator"):
+            v = (t.get(key) or "").upper().strip()
+            if v and v[:4] == needle4:
+                tid = t.get("id") or t.get("aircraftid") or t.get("templateid")
+                if tid is not None:
+                    return int(tid)
+    return None
+
+
 # ─── Routes ────────────────────────────────────────────────────────────────────
 
 def _airport_payload(icao_or_label: str) -> Any:
@@ -223,6 +287,8 @@ def _build_route_request(
     alternate1: str | None = None,
     alternate2: str | None = None,
     allow_vfr_downgrade: bool = False,
+    aircraft_template_id: int | None = None,
+    fl_window: int = 60,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "departure": _airport_payload(departure),
@@ -238,11 +304,11 @@ def _build_route_request(
     if cruise_level is not None:
         # Fenêtre large pour laisser autorouter choisir un FL routable
         # selon les airways. Trop serré → internalerror.
-        payload["minlevel"] = max(10, int(cruise_level) - 60)
-        payload["maxlevel"] = int(cruise_level) + 60
-    # aircraftid=0 → P28R built-in (Arrow). Acceptable pour la plupart
-    # des trajets ; les contraintes perf restent gérées côté DIC.
-    payload["aircraftid"] = 0
+        payload["minlevel"] = max(10, int(cruise_level) - fl_window)
+        payload["maxlevel"] = int(cruise_level) + fl_window
+    # aircraftid : préfère le template utilisateur matchant le type ICAO
+    # (DHC6, DA62, L410). Fallback sur 0 = P28R built-in.
+    payload["aircraftid"] = aircraft_template_id if aircraft_template_id else 0
     if alternate1:
         alt1 = _airport_payload(alternate1)
         if isinstance(alt1, str):
@@ -264,17 +330,20 @@ def _is_user_added(icao: str) -> bool:
         return False
 
 
-def suggest_route(
+def _suggest_route_once(
     cfg: AutorouterConfig,
     departure: str, destination: str,
-    aircraft_type: str | None = None,
-    cruise_level: int | None = None,
-    eobt_iso: str | None = None,
-    alternate1: str | None = None,
-    alternate2: str | None = None,
-    poll_timeout_s: int = 240,
-    poll_interval_s: float = 1.5,
-    per_request_timeout_s: int = 90,
+    *, aircraft_type: str | None,
+    cruise_level: int | None,
+    eobt_iso: str | None,
+    alternate1: str | None,
+    alternate2: str | None,
+    aircraft_template_id: int | None,
+    fl_window: int,
+    allow_vfr_downgrade: bool,
+    poll_timeout_s: int,
+    poll_interval_s: float,
+    per_request_timeout_s: int,
 ) -> AutorouterRoute:
     """End-to-end route request:
       1. POST /router → routeid
@@ -290,14 +359,14 @@ def suggest_route(
     during longpoll are retried up to 3 times — the route is still
     running server-side, we just reconnect.
     """
-    # vfrdowngrade only when we know one end is a non-published FOB —
-    # otherwise it pollutes IFPS validation on standard IFR routes.
-    needs_vfr = _is_user_added(departure) or _is_user_added(destination)
+    needs_vfr = allow_vfr_downgrade
     payload = _build_route_request(
         departure, destination, aircraft_type=aircraft_type,
         cruise_level=cruise_level, eobt_iso=eobt_iso,
         alternate1=alternate1, alternate2=alternate2,
         allow_vfr_downgrade=needs_vfr,
+        aircraft_template_id=aircraft_template_id,
+        fl_window=fl_window,
     )
     headers = _auth_headers(cfg)
     resp = requests.post(
@@ -428,6 +497,68 @@ def suggest_route(
             )
         except Exception:
             pass
+
+
+def suggest_route(
+    cfg: AutorouterConfig,
+    departure: str, destination: str,
+    aircraft_type: str | None = None,
+    cruise_level: int | None = None,
+    eobt_iso: str | None = None,
+    alternate1: str | None = None,
+    alternate2: str | None = None,
+    poll_timeout_s: int = 240,
+    poll_interval_s: float = 1.5,
+    per_request_timeout_s: int = 90,
+) -> AutorouterRoute:
+    """Stratégie en 2 essais pour maximiser le succès :
+
+    1. **Strict** : template appareil matchant le type ICAO, fenêtre FL ±60,
+       vfrdowngrade off sauf FOB user-added. Donne la meilleure route IFR.
+    2. **Relâché** (si le strict échoue avec internalerror) : aircraftid=0
+       (P28R), fenêtre FL ±150, vfrdowngrade=True. Catch-all qui produit
+       presque toujours quelque chose, quitte à accepter du VFR.
+
+    Le 2e essai n'est lancé que si le 1er échoue avec un signal exploitable
+    — pas sur les erreurs réseau, OAuth ou timeout (ces conditions
+    persistent).
+    """
+    needs_vfr_first = _is_user_added(departure) or _is_user_added(destination)
+    tpl_id = find_template_id_for_type(cfg, aircraft_type or "") if aircraft_type else None
+
+    try:
+        return _suggest_route_once(
+            cfg, departure, destination,
+            aircraft_type=aircraft_type, cruise_level=cruise_level,
+            eobt_iso=eobt_iso, alternate1=alternate1, alternate2=alternate2,
+            aircraft_template_id=tpl_id, fl_window=60,
+            allow_vfr_downgrade=needs_vfr_first,
+            poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
+            per_request_timeout_s=per_request_timeout_s,
+        )
+    except AutorouterError as e:
+        msg = str(e).lower()
+        # Retry uniquement sur les échecs "pas de route" qui peuvent céder
+        # à des contraintes plus larges.
+        retryable = (
+            "internalerror" in msg
+            or "n'a pas trouvé" in msg
+            or "non-ifr" in msg
+            or "enrouteerror" in msg
+            or "iterationerror" in msg
+        )
+        if not retryable:
+            raise
+        # 2e essai : large fenêtre + appareil par défaut + VFR autorisé.
+        return _suggest_route_once(
+            cfg, departure, destination,
+            aircraft_type=aircraft_type, cruise_level=cruise_level,
+            eobt_iso=eobt_iso, alternate1=alternate1, alternate2=alternate2,
+            aircraft_template_id=None, fl_window=150,
+            allow_vfr_downgrade=True,
+            poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
+            per_request_timeout_s=per_request_timeout_s,
+        )
 
 
 def _normalise_solution(
