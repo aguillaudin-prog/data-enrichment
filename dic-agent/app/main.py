@@ -491,7 +491,7 @@ def _render_dual_suggest(*, sid_key: str, idx: int, kprefix: str) -> None:
             if r["extras"]:
                 for x in r["extras"]:
                     st.caption("• " + x)
-            if st.button("✅ Appliquer", key=f"{kprefix}_apply_local", use_container_width=True):
+            if st.button("✅ Appliquer", key=f"{kprefix}_apply_local", width="stretch"):
                 st.session_state[f"_pending_route_{sid_key}_{idx}"] = r["route_text"]
                 st.session_state[f"_pending_suggest_msg_{sid_key}_{idx}"] = (
                     f"Appliquée : route locale `{r['route_text']}` ({r['distance_nm']:.0f} NM)"
@@ -509,7 +509,7 @@ def _render_dual_suggest(*, sid_key: str, idx: int, kprefix: str) -> None:
             st.caption(f"{r['distance_nm']:.0f} NM · {r['time_min']} min")
             if r["logs_tail"]:
                 st.caption("IFPS : " + " · ".join(r["logs_tail"]))
-            if st.button("✅ Appliquer", key=f"{kprefix}_apply_ar", use_container_width=True):
+            if st.button("✅ Appliquer", key=f"{kprefix}_apply_ar", width="stretch"):
                 st.session_state[f"_pending_route_{sid_key}_{idx}"] = r["route_text"]
                 st.session_state[f"_pending_suggest_msg_{sid_key}_{idx}"] = (
                     f"Appliquée : route autorouter `{r['route_text']}` ({r['distance_nm']:.0f} NM)"
@@ -571,7 +571,7 @@ def _render_briefing_section(*, legs: list[dict]) -> None:
     with bc2:
         st.write("")
         label = "🔄 Rafraîchir" if have_cache else "🌤️ Charger"
-        if st.button(label, key="briefing_fetch", use_container_width=True):
+        if st.button(label, key="briefing_fetch", width="stretch"):
             if not ar_cfg.is_configured():
                 st.error("Autorouter pas configuré (voir page ⚙ Admin).")
             else:
@@ -837,7 +837,7 @@ def _leg_editor(idx: int, leg: dict) -> dict:
             "🤖 Suggérer",
             key=f"{kprefix}_suggest",
             help="Lance les deux moteurs (A* local + autorouter.aero) et affiche les deux routes. Tu choisis celle à appliquer.",
-            use_container_width=True,
+            width="stretch",
         ):
             if origin and destination:
                 _run_dual_suggest(
@@ -1023,7 +1023,7 @@ with st.sidebar:
         btn_help = subtitle
         clicked = st.button(
             btn_label, key=f"nav_step_{i}", help=btn_help,
-            use_container_width=True,
+            width="stretch",
             type="primary" if is_current else "secondary",
         )
         if clicked:
@@ -1056,7 +1056,7 @@ for i, (num, title, _sub) in enumerate(PAGES):
         clicked = st.button(
             f"{num} {title}",
             key=f"topnav_{i}",
-            use_container_width=True,
+            width="stretch",
             type="primary" if is_current else "secondary",
         )
         if clicked:
@@ -1081,7 +1081,7 @@ def _step_nav_footer() -> None:
         if 0 < page_idx <= LINEAR_MAX:
             if st.button(
                 f"← Précédent : {PAGES[page_idx - 1][1]}",
-                key=f"prev_step_{page_idx}", use_container_width=True,
+                key=f"prev_step_{page_idx}", width="stretch",
             ):
                 _goto_page(page_idx - 1)
                 st.rerun()
@@ -1089,7 +1089,7 @@ def _step_nav_footer() -> None:
         if page_idx < LINEAR_MAX:
             if st.button(
                 f"Suivant : {PAGES[page_idx + 1][1]}  →",
-                key=f"next_step_{page_idx}", use_container_width=True,
+                key=f"next_step_{page_idx}", width="stretch",
                 type="primary",
             ):
                 _goto_page(page_idx + 1)
@@ -1359,7 +1359,7 @@ if page_idx == 2:
                     "TAS": seg.tas,
                 }
             )
-        st.dataframe(rows_view, use_container_width=True)
+        st.dataframe(rows_view, width="stretch")
 
         leg_input = {
             "origin": leg["origin"],

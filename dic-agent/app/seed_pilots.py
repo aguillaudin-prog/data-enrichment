@@ -55,11 +55,15 @@ def _dedupe_pilots_case_insensitive() -> int:
 
 def main() -> int:
     db.init_schema()
+    for p in DEFAULT_PILOTS:
+        db.save_pilot(name=p["name"], role=p["role"], rank=p["rank"], allowed_operator=p["operator"])
+    # Dedup runs AFTER inserts: SQLite's UNIQUE(name, role) is binary so
+    # 'LAZARE Jean-Michel' and 'Lazare Jean-Michel' end up as two rows.
+    # This pass keeps the canonical (DEFAULT_PILOTS) case-variant and drops
+    # the rest.
     n = _dedupe_pilots_case_insensitive()
     if n:
         print(f"Removed {n} case-duplicate pilot row(s).")
-    for p in DEFAULT_PILOTS:
-        db.save_pilot(name=p["name"], role=p["role"], rank=p["rank"], allowed_operator=p["operator"])
     print(f"Seeded {len(DEFAULT_PILOTS)} pilots:")
     for p in db.list_pilots():
         op = (p["allowed_operator"] or "(any)") if "allowed_operator" in p.keys() else "(any)"
