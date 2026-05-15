@@ -461,17 +461,59 @@ def _leg_editor(idx: int, leg: dict) -> dict:
         )
     eobt = dt.datetime.combine(d, t).replace(tzinfo=dt.timezone.utc)
 
-    rc1, rc2 = st.columns([5, 1])
+    rc1, rc2, rc3 = st.columns([4, 1, 1])
     with rc1:
         route_text = st.text_input(
             "Route texte ICAO (ex. `TYE POLTO LAG L433 IBA R778 TEGDA MNA`)",
             value=leg.get("route_text", ""),
             key=f"{kprefix}_route",
         )
+    with rc3:
+        st.write("")
+        st.write("")
+        if st.button(
+            "🌐 Autorouter",
+            key=f"{kprefix}_ar_suggest",
+            help="Suggestion approfondie via autorouter.aero (préférences IFR, validation IFPS)",
+        ):
+            if origin and destination:
+                from app import autorouter_client
+                ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
+                if not ar_cfg.is_configured():
+                    st.error(
+                        "Autorouter pas configuré. Ouvre la sidebar → "
+                        "'🌐 Autorouter API' pour la marche à suivre."
+                    )
+                else:
+                    try:
+                        with st.spinner("Appel autorouter (peut prendre 30-90s)…"):
+                            ar_route = autorouter_client.suggest_route(
+                                ar_cfg,
+                                departure=origin, destination=destination,
+                                aircraft_type=ac_type or None,
+                                cruise_level=int(fl) if fl else None,
+                                eobt_iso=eobt.isoformat() if eobt else None,
+                                alternate1=leg.get("alternate") or None,
+                            )
+                        st.session_state[f"_pending_route_{sid}_{idx}"] = (
+                            ar_route.route_text or ar_route.fpl
+                        )
+                        msg = (
+                            f"🌐 Route autorouter : `{ar_route.route_text}` "
+                            f"({ar_route.distance_nm:.0f} NM, "
+                            f"{ar_route.time_seconds // 60} min)"
+                        )
+                        if ar_route.log_messages:
+                            tail = ar_route.log_messages[-3:]
+                            msg += "  \nValidation IFPS : " + " · ".join(tail)
+                        st.session_state[f"_pending_suggest_msg_{sid}_{idx}"] = msg
+                        st.rerun()
+                    except autorouter_client.AutorouterError as e:
+                        st.error(f"Autorouter : {e}")
     with rc2:
         st.write("")
         st.write("")
-        if st.button("✨ Suggérer", key=f"{kprefix}_suggest", help="A* sur les NAVAID dans le corridor"):
+        if st.button("✨ Suggérer", key=f"{kprefix}_suggest", help="A* local sur les NAVAID dans le corridor"):
             if origin and destination:
                 min_rwy = int(ac_perf["min_runway_ft"]) if (ac_perf and ac_perf["min_runway_ft"]) else None
                 with st.spinner("Calcul A*…"):
@@ -758,6 +800,40 @@ with st.sidebar:
             )
             st.success(f"Aérodrome {new_label} ajouté.")
             st.rerun()
+
+    st.divider()
+    with st.expander("🌐 Autorouter API (suggestion approfondie)"):
+        from app import autorouter_client
+        ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
+        if ar_cfg.is_configured():
+            st.caption(f"✓ Configuré — `{ar_cfg.base_url}`")
+            if st.button("🔌 Test connexion", key="ar_test"):
+                try:
+                    info = autorouter_client.ping_version(ar_cfg)
+                    st.success(
+                        f"API v{info.get('major')}.{info.get('minor')}.{info.get('patch')} "
+                        f"({'prod' if info.get('production') else 'sandbox'})"
+                    )
+                    # Test the token endpoint too (proves credentials work)
+                    try:
+                        autorouter_client._get_token(ar_cfg)
+                        st.success("Token OAuth obtenu — credentials valides.")
+                    except autorouter_client.AutorouterError as e:
+                        st.error(f"Token : {e}")
+                except autorouter_client.AutorouterError as e:
+                    st.error(str(e))
+        else:
+            st.caption(
+                "Pas configuré. Ajoute dans Streamlit Cloud → Settings → Secrets :"
+            )
+            st.code(
+                "[autorouter]\n"
+                'base_url = "https://api.autorouter.aero/v1.0"\n'
+                'token_url = "https://api.autorouter.aero/v1.0/oauth2/token"\n'
+                'client_id = "ton.email@example.org"\n'
+                'client_secret = "ton-mot-de-passe-autorouter"\n',
+                language="toml",
+            )
 
     st.divider()
     st.caption(
