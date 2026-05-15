@@ -351,6 +351,23 @@ def suggest_route(
                                 "enrouteerror", "internalerror", "iterationerror",
                                 "siderror", "starerror", "validatorerror",
                             ) if msg.get(k)]
+                            # Friendly diagnosis for the common case: autorouter
+                            # only validates fully-IFR/GAT routes, so military /
+                            # non-published / VFR-mixed legs always fail with
+                            # the IFR/GAT WARN313 + internalerror combo.
+                            log_blob = " ".join(logs).upper()
+                            non_ifr = (
+                                "internalerror" in err_flags
+                                and ("ENTIRELY IFR/GAT" in log_blob
+                                     or "TRAJECTORY INFO DISCARDED" in log_blob)
+                            )
+                            if non_ifr:
+                                raise AutorouterError(
+                                    "Autorouter rejette les routes non-IFR pures. "
+                                    "Cas typique : aérodrome militaire / non-publié "
+                                    "(TOUROU, KAINJI, FOB) ou portion VFR. "
+                                    "Utilise la suggestion locale (✨)."
+                                )
                             raise AutorouterError(
                                 "router stopped without a valid route. "
                                 f"flags: {err_flags or 'none'}. "
