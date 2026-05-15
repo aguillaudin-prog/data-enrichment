@@ -458,7 +458,13 @@ def _run_dual_suggest(
                     "distance_nm": ar_route.distance_nm,
                     "time_min": ar_route.time_seconds // 60,
                     "logs_tail": (ar_route.log_messages or [])[-3:],
+                    "route_id": ar_route.route_id,
                 }
+                # Persist the latest successful autorouter route_id so the
+                # briefing PDF endpoint can be called later without re-running
+                # a suggestion. Keyed by leg index → simple to consume.
+                if ar_route.route_id:
+                    st.session_state.setdefault("_ar_routes", {})[idx] = ar_route.route_id
             except autorouter_client.AutorouterError as e:
                 result["ar_err"] = str(e)
     else:
@@ -704,6 +710,52 @@ def _render_gramet_section(*, legs: list[dict], ar_cfg) -> None:
                         )
                     except autorouter_client.AutorouterError as e:
                         st.error(f"GRAMET : {e}")
+
+    # Briefing pack PDF (ops-oriented) — nécessite un route_id obtenu via
+    # une suggestion autorouter récente. Le bouton est désactivé tant qu'on
+    # n'a pas tourné le 🤖 Suggérer avec succès côté autorouter sur un leg.
+    ar_routes: dict = st.session_state.get("_ar_routes") or {}
+    st.markdown("#### 📦 Briefing pack (ops complet, PDF)")
+    st.caption(
+        "Pack autorouter complet : navlog, W&B, perfs, METAR/TAF, GRAMET, "
+        "SIGWX, NOTAM graphique, **ATC briefing + milbulletin + ATC charges** "
+        "(orienté ops). Génération asynchrone côté autorouter : 1-5 min."
+    )
+    if not ar_routes:
+        st.info(
+            "Pour activer ce bouton : lance d'abord **🤖 Suggérer** sur un "
+            "leg en page Legs avec succès côté autorouter. Le `route_id` "
+            "récupéré sera réutilisé ici."
+        )
+    else:
+        for leg_idx, route_id in sorted(ar_routes.items()):
+            if leg_idx >= len(valid_legs):
+                continue
+            l = valid_legs[leg_idx] if leg_idx < len(valid_legs) else None
+            if not l:
+                continue
+            label = (
+                f"📦 Briefing PDF leg {leg_idx + 1} : "
+                f"{l['origin']} → {l['destination']}"
+            )
+            if st.button(label, key=f"briefing_{leg_idx}_{route_id}"):
+                if not ar_cfg.is_configured():
+                    st.error("Autorouter pas configuré (voir page ⚙ Admin).")
+                else:
+                    with st.spinner("Compilation du briefing par autorouter (1-5 min)…"):
+                        try:
+                            pdf_bytes = autorouter_client.fetch_briefing_pack(
+                                ar_cfg, route_id,
+                                items=autorouter_client.BRIEFING_OPS_ITEMS,
+                            )
+                            st.download_button(
+                                f"⬇️ Briefing_{l['origin']}_{l['destination']}.pdf",
+                                data=pdf_bytes, mime="application/pdf",
+                                file_name=f"Briefing_{l['origin']}_{l['destination']}.pdf",
+                                key=f"briefing_dl_{leg_idx}",
+                            )
+                        except autorouter_client.AutorouterError as e:
+                            st.error(f"Briefing : {e}")
 
 
 def _leg_editor(idx: int, leg: dict) -> dict:

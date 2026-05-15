@@ -81,6 +81,9 @@ class AutorouterRoute:
     time_seconds: int = 0
     raw_solution: dict = field(default_factory=dict)
     log_messages: list[str] = field(default_factory=list)
+    # Persisted so the caller can later request a briefing pack against
+    # the same /flightplan/<routeid>/briefing endpoint.
+    route_id: str = ""
 
 
 class AutorouterError(Exception):
@@ -412,7 +415,9 @@ def suggest_route(
                 f"timeout après {poll_timeout_s}s sans solution. "
                 f"Logs: {logs[-3:] if logs else '—'}"
             )
-        return _normalise_solution(solution, fpl_fallback=last_fpl, logs=logs)
+        normalised = _normalise_solution(solution, fpl_fallback=last_fpl, logs=logs)
+        normalised.route_id = route_id
+        return normalised
     finally:
         # Best-effort close — ignore errors here, the session will time
         # out server-side anyway.
@@ -659,6 +664,106 @@ def fetch_gramet(
         raise AutorouterError(f"GRAMET HTTP {resp.status_code}: {resp.text[:300]}")
     mime = "application/pdf" if params["format"] == "pdf" else "image/png"
     return resp.content, mime
+
+
+# ─── Briefing pack ─────────────────────────────────────────────────────────────
+
+# Ops-oriented preset : tout ce qui sert à l'attaché défense (atcbriefing,
+# milbulletin, atcharges) en plus du pack pilote standard. La sortie est un
+# PDF unique compilé par autorouter.
+BRIEFING_OPS_ITEMS = [
+    "navlog", "wb", "distances", "climb", "descent",
+    "metartaf", "gramet", "isobaric", "skewt", "sigwx", "mslp", "temsi",
+    "atcbriefing", "notam", "milbulletin", "icaofpl", "raim", "atcharges",
+]
+
+
+def request_briefing(
+    cfg: AutorouterConfig, route_id: str,
+    items: list[str] | None = None,
+) -> str:
+    """POST /flightplan/<routeid>/briefing (non-blocking download).
+
+    Returns a token to poll for completion. Use poll_briefing(token) and
+    fetch_briefing(token) to retrieve the PDF once ready.
+    """
+    if not route_id:
+        raise AutorouterError("route_id manquant — relance une suggestion autorouter d'abord.")
+    items = items or BRIEFING_OPS_ITEMS
+    try:
+        resp = requests.post(
+            f"{cfg.base_url}/flightplan/{route_id}/briefing",
+            data={"method": "download", "items": _json.dumps(items)},
+            headers=_auth_headers(cfg), timeout=30,
+        )
+    except requests.exceptions.RequestException as e:
+        raise AutorouterError(f"network: {e}")
+    if resp.status_code != 200:
+        raise AutorouterError(
+            f"POST /briefing HTTP {resp.status_code}: {resp.text[:300]}"
+        )
+    # Token returned as plain text or JSON-wrapped string.
+    body = (resp.text or "").strip()
+    try:
+        data = resp.json()
+        if isinstance(data, str):
+            return data.strip()
+        if isinstance(data, dict):
+            return (data.get("token") or data.get("id") or "").strip()
+    except (ValueError, requests.exceptions.JSONDecodeError):
+        pass
+    return body.strip('"').strip("'")
+
+
+def poll_briefing(cfg: AutorouterConfig, route_id: str, token: str) -> bool:
+    """Returns True when the briefing pack is ready (HTTP 200), False if 404."""
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/flightplan/{route_id}/briefing/{token}",
+            params={"poll": "1"},
+            headers=_auth_headers(cfg), timeout=20,
+        )
+    except requests.exceptions.RequestException:
+        return False
+    return resp.status_code == 200
+
+
+def fetch_briefing(cfg: AutorouterConfig, route_id: str, token: str) -> bytes:
+    """Download the PDF once poll_briefing returned True."""
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/flightplan/{route_id}/briefing/{token}",
+            headers=_auth_headers(cfg), timeout=120,
+        )
+    except requests.exceptions.RequestException as e:
+        raise AutorouterError(f"network: {e}")
+    if resp.status_code != 200:
+        raise AutorouterError(
+            f"GET briefing HTTP {resp.status_code}: {resp.text[:300]}"
+        )
+    return resp.content
+
+
+def fetch_briefing_pack(
+    cfg: AutorouterConfig, route_id: str, *,
+    items: list[str] | None = None,
+    poll_timeout_s: int = 240,
+    poll_interval_s: float = 4.0,
+) -> bytes:
+    """End-to-end : POST request, poll until ready, download. Synchronous
+    wrapper meant for Streamlit usage behind a spinner. autorouter peut
+    prendre 1-5 min pour un pack complet — d'où le poll_timeout_s long."""
+    token = request_briefing(cfg, route_id, items=items)
+    if not token:
+        raise AutorouterError("autorouter n'a pas renvoyé de token de briefing.")
+    deadline = time.time() + poll_timeout_s
+    while time.time() < deadline:
+        if poll_briefing(cfg, route_id, token):
+            return fetch_briefing(cfg, route_id, token)
+        time.sleep(poll_interval_s)
+    raise AutorouterError(
+        f"Briefing pas prêt après {poll_timeout_s}s. Réessaie plus tard."
+    )
 
 
 def format_notam(n: NotamRow) -> str:
