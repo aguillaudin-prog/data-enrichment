@@ -471,36 +471,92 @@ if "legs" not in st.session_state:
     st.session_state.legs = [
         {"origin": "", "destination": "", "fl": 90, "tas": 140, "route_text": ""}
     ]
+if "page_idx" not in st.session_state:
+    st.session_state.page_idx = 0
 
-# Sidebar-based navigation. Streamlit's st.tabs scrolls out of view on long
-# forms and there's no reliable CSS hack across versions to make it sticky,
-# so the 3 sections are selected via a radio in the sidebar (which is sticky
-# by construction).
-PAGES = ["1️⃣ Mission & profils", "2️⃣ Legs", "3️⃣ Preview & export"]
+# Wizard-style navigation. The 3 sections are presented as large buttons in
+# the sidebar AND as a "Suivant →" CTA at the bottom of each section, so a
+# non-technical user always sees both the current step and how to advance.
+# Why not st.tabs: Streamlit's tab bar scrolls out of view on long forms,
+# and no reliable CSS makes it sticky across versions.
+PAGES = [
+    ("1.", "Mission & profils", "Avion, équipage, compagnie"),
+    ("2.", "Legs", "Itinéraire, dates, route"),
+    ("3.", "Preview & export", "Génère le .docx DIC"),
+]
+
+
+def _goto_page(idx: int) -> None:
+    st.session_state.page_idx = max(0, min(idx, len(PAGES) - 1))
+
+
+_mission_done = bool((st.session_state.get("mission") or {}).get("registration"))
+_legs_done = any(
+    leg.get("origin") and leg.get("destination") and leg.get("route_text")
+    for leg in st.session_state.legs
+)
+
 with st.sidebar:
-    st.header("DIC Agent")
-    page = st.radio("Étape", PAGES, label_visibility="collapsed")
-    st.divider()
-    _mission_done = bool((st.session_state.get("mission") or {}).get("registration"))
-    _legs_done = any(
-        leg.get("origin") and leg.get("destination") and leg.get("route_text")
-        for leg in st.session_state.legs
-    )
-    st.markdown(
-        f"**Progression**\n\n"
-        f"- {'✅' if _mission_done else '⬜'} Mission renseignée\n"
-        f"- {'✅' if _legs_done else '⬜'} Au moins un leg complet"
-    )
+    st.header("🛩️ DIC Agent")
+    st.caption("Suis les 3 étapes ci-dessous, dans l'ordre.")
+    for i, (num, title, subtitle) in enumerate(PAGES):
+        is_current = (st.session_state.page_idx == i)
+        if i == 0:
+            done = _mission_done
+        elif i == 1:
+            done = _legs_done
+        else:
+            done = False
+        icon = "✅" if (done and not is_current) else ("▶" if is_current else "○")
+        btn_label = f"{icon}  {num} {title}"
+        btn_help = subtitle
+        clicked = st.button(
+            btn_label, key=f"nav_step_{i}", help=btn_help,
+            use_container_width=True,
+            type="primary" if is_current else "secondary",
+        )
+        if clicked:
+            _goto_page(i)
+            st.rerun()
     st.divider()
     st.subheader("Paramètres globaux")
     template_format = st.radio("Format DIC", ["FRA", "ICAO"], horizontal=True)
     st.divider()
     st.caption(
-        "Tip : pour un point de coordonnées brutes, saisir au format "
+        "Astuce : pour un point de coordonnées brutes, format "
         "`N 9°34'45.56\" / E 3°14'7.09\"` ou `N9 34 45 / E3 14 7`."
     )
 
-if page == PAGES[0]:
+page_idx = st.session_state.page_idx
+st.markdown(f"### Étape {PAGES[page_idx][0]} {PAGES[page_idx][1]}")
+st.caption(PAGES[page_idx][2])
+st.divider()
+
+
+def _step_nav_footer() -> None:
+    """Big Précédent / Suivant CTAs at the bottom of each step."""
+    st.divider()
+    c_prev, c_spacer, c_next = st.columns([2, 3, 2])
+    with c_prev:
+        if page_idx > 0:
+            if st.button(
+                f"← Précédent : {PAGES[page_idx - 1][1]}",
+                key=f"prev_step_{page_idx}", use_container_width=True,
+            ):
+                _goto_page(page_idx - 1)
+                st.rerun()
+    with c_next:
+        if page_idx < len(PAGES) - 1:
+            if st.button(
+                f"Suivant : {PAGES[page_idx + 1][1]}  →",
+                key=f"next_step_{page_idx}", use_container_width=True,
+                type="primary",
+            ):
+                _goto_page(page_idx + 1)
+                st.rerun()
+
+
+if page_idx == 0:
     c1, c2, c3 = st.columns(3)
     with c1:
         reference = st.text_input("Reference number", value="MSG DU " + dt.date.today().strftime("%d/%m/%Y"))
@@ -633,7 +689,9 @@ def _reset_to_blank_mission() -> None:
     st.session_state.pop("_loaded_tpl_name", None)
 
 
-if page == PAGES[1]:
+    _step_nav_footer()
+
+if page_idx == 1:
     tpl_rows = db.list_route_templates()
     by_cat: dict[str, list] = {}
     for r in tpl_rows:
@@ -713,7 +771,9 @@ if page == PAGES[1]:
             st.rerun()
 
 
-if page == PAGES[2]:
+    _step_nav_footer()
+
+if page_idx == 2:
     if not st.session_state.legs or not any(l.get("origin") for l in st.session_state.legs):
         st.info("Saisis au moins un leg avec une origine.")
         st.stop()
@@ -903,3 +963,5 @@ if page == PAGES[2]:
                 file_name="FPL_" + (mission.get("registration") or "mission").replace("/", "-") + ".txt",
                 mime="text/plain",
             )
+
+    _step_nav_footer()
