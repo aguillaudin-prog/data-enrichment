@@ -1069,11 +1069,16 @@ st.divider()
 
 
 def _step_nav_footer() -> None:
-    """Big Précédent / Suivant CTAs at the bottom of each step."""
+    """Big Précédent / Suivant CTAs at the bottom of each step.
+
+    Admin (page_idx 3) est hors flux linéaire : on n'y propose pas de
+    Précédent → Preview et on ne propose pas Suivant → Admin depuis
+    Preview. L'accès Admin se fait uniquement via la sidebar."""
+    LINEAR_MAX = 2  # last sequential page (Preview & export)
     st.divider()
     c_prev, c_spacer, c_next = st.columns([2, 3, 2])
     with c_prev:
-        if page_idx > 0:
+        if 0 < page_idx <= LINEAR_MAX:
             if st.button(
                 f"← Précédent : {PAGES[page_idx - 1][1]}",
                 key=f"prev_step_{page_idx}", use_container_width=True,
@@ -1081,7 +1086,7 @@ def _step_nav_footer() -> None:
                 _goto_page(page_idx - 1)
                 st.rerun()
     with c_next:
-        if page_idx < len(PAGES) - 1:
+        if page_idx < LINEAR_MAX:
             if st.button(
                 f"Suivant : {PAGES[page_idx + 1][1]}  →",
                 key=f"next_step_{page_idx}", use_container_width=True,
