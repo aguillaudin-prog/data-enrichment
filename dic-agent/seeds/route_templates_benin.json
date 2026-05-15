@@ -126,23 +126,23 @@
     ]
   },
   {
-    "name": "BÉNIN / TOUROU → K AINJI NAFB",
+    "name": "BÉNIN / TOUROU → KAINJI NAFB → TOUROU",
     "category": "Bénin",
     "legs": [
       {
         "order": 1,
         "origin": "TOUROU",
-        "destination": "K AINJI NAFB",
-        "route_text": "TOUROU 9°34'45.56\" 3°14'7.09\" 9°34'45.56\" 3°14'7.09\" AINJI",
+        "destination": "DNKA",
+        "route_text": "DCT",
         "fl": 90,
         "tas": 140,
         "alternate": "DNIL"
       },
       {
         "order": 2,
-        "origin": "K AINJI NAFB",
+        "origin": "DNKA",
         "destination": "TOUROU",
-        "route_text": "NJI 9°34'45.56\" 3°14'7.09\" 9°34'45.56\" 3°14'7.09\" TOUROU",
+        "route_text": "DCT",
         "fl": 100,
         "tas": 140,
         "alternate": "DBBB"
