@@ -21,7 +21,10 @@ SEEDS_DIR = Path(__file__).resolve().parent.parent / "seeds"
 DEFAULT_AIRCRAFT = [
     {
         "registration": "TY-BAB",
-        "type_icao": "DHC6",
+        # Reference DICs use the marketing variant 'DHC6-400' (Series 400)
+        # in the (12) Number and type cell. Store it as the type so the
+        # docx output matches the operational documents 1:1.
+        "type_icao": "DHC6-400",
         "callsign": "TY-BAB",
         "operator": "AMAZONE AIRLINES / DYNAMI AVIATION OPS",
     },

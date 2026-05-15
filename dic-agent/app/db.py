@@ -442,14 +442,22 @@ def list_countries() -> list[sqlite3.Row]:
 
 
 def find_country_name(iso_a2: str) -> str | None:
-    """Return the English name for an ISO2 country code (BJ → 'Benin')."""
+    """Return the country name for an ISO2 code, French-form preferred.
+
+    Reference DICs are produced for French defence attachés and use the
+    French country names (CÔTE D'IVOIRE, GUINÉE) rather than the English
+    equivalents (Ivory Coast, Guinea). Natural Earth carries both; we
+    fall back to English when French is missing."""
     if not iso_a2:
         return None
     with connect() as c:
         row = c.execute(
-            "SELECT name_en FROM country WHERE iso_a2 = ?", (iso_a2.strip().upper(),)
+            "SELECT name_fr, name_en FROM country WHERE iso_a2 = ?",
+            (iso_a2.strip().upper(),),
         ).fetchone()
-        return row["name_en"] if row else None
+        if not row:
+            return None
+        return row["name_fr"] or row["name_en"]
 
 
 def list_aircraft(operator: str | None = None) -> list[sqlite3.Row]:

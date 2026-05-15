@@ -266,8 +266,11 @@ def resolve_route(
 
 
 def _build_country_index() -> list[tuple[str, str, "shape"]]:
+    """ISO2 → display name → polygon, sourced from Natural Earth.
+    Prefers the French name (CÔTE D'IVOIRE, GUINÉE) when available, since
+    reference DICs target French defence attachés. Falls back to English."""
     rows = db.list_countries()
-    return [(r["iso_a2"], r["name_en"], shape(json.loads(r["geom_geojson"]))) for r in rows]
+    return [(r["iso_a2"], r["name_fr"] or r["name_en"], shape(json.loads(r["geom_geojson"]))) for r in rows]
 
 
 def _country_at(lat: float, lon: float, idx) -> tuple[str | None, str | None]:
@@ -435,6 +438,39 @@ def compute_leg(
             )
         )
         start_idx = end_idx
+
+    # Defensive: ensure the destination country is always represented as a
+    # segment. The main loop labels the last segment with whatever country
+    # was last detected by the sampler — when the sampler misses a thin
+    # coastal country between an ocean stretch and the destination (e.g. a
+    # great-circle DBBB→DIAP returning Ghana as the last segment exiting
+    # at DIAP, when DIAP is in Côte d'Ivoire), the destination's country is
+    # silently dropped. Here we split the last segment in two so the
+    # destination's country surfaces in the DIC.
+    if segments and end_iso and segments[-1].state_iso != end_iso:
+        last = segments[-1]
+        # Heuristic split: 70/30 of the last segment in favour of the
+        # previously detected country. Better than 50/50 because the route
+        # was probably in that country for most of the segment before
+        # entering the destination's airspace.
+        delta = last.exit_time - last.entry_time
+        split_time = last.entry_time + delta * 0.7
+        last.exit_time = split_time
+        last.exit_label = f"EXIT {(last.state_name or '').upper()}"
+        segments.append(
+            StateSegment(
+                state_iso=end_iso,
+                state_name=end_name or end_iso,
+                entry_label=f"ENTRY {(end_name or '').upper()}",
+                entry_time=split_time,
+                exit_label=_label_for_crossing("destination", points, coord_points, True),
+                exit_time=t_end,
+                route_in_country=_route_string_in_country(points, end_iso, country_index) or "DCT",
+                fl=fl,
+                tas=tas_kt,
+            )
+        )
+
     res.segments = segments
     return res
 
@@ -448,6 +484,12 @@ def _label_for_crossing(kind: str, points, coord_points, is_first_or_last: bool)
 
 
 def _route_string_in_country(points: list[ResolvedPoint], iso: str | None, idx) -> str:
+    """Waypoints that geographically fall inside country `iso`, joined as
+    'A - B - C'. Returns 'DCT' if no waypoint matches — common for thin
+    transit countries (Liberia between Ivory Coast and Sierra Leone) where
+    the great-circle clips a corner without any published fix on the way.
+    Better than an empty cell in the DIC, which signalled 'missing data'
+    to the receiving authority."""
     if not iso:
         return ""
     labels: list[str] = []
@@ -457,10 +499,10 @@ def _route_string_in_country(points: list[ResolvedPoint], iso: str | None, idx) 
         p_iso, _ = _country_at(p.lat, p.lon, idx)
         if p_iso == iso:
             labels.append(p.label)
-    return " - ".join(labels)
+    return " - ".join(labels) if labels else "DCT"
 
 
 def format_zulu(t: dt.datetime, style: str = "FRA") -> str:
-    if style == "ICAO":
-        return t.strftime("%d %b %y %H%MZ").upper()
-    return t.strftime("%d/%m/%Y, %H.%M")
+    # Reference DIC samples use 'DD/MM/YYYY HHhMMZ' (e.g. '04/05/2026 03H00Z').
+    # The legacy 'DD/MM/YYYY, HH.MM' format is gone — single style now.
+    return t.strftime("%d/%m/%Y %HH%MZ")
