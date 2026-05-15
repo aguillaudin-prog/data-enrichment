@@ -128,6 +128,46 @@ def _auth_headers(cfg: AutorouterConfig) -> dict[str, str]:
     }
 
 
+def _parse_route_id(resp: requests.Response) -> str:
+    """Extract a route_id from POST /router's response.
+
+    The autorouter wiki examples show IDs as plain strings (e.g.
+    'LFSB-LYTV-59156af893577'). Different deployments wrap them in
+    different ways: bare text, JSON-encoded string, or an object with a
+    routeid/id field. Cover all three so the integration is robust to
+    minor server-side changes.
+    """
+    body = (resp.text or "").strip()
+    if not body:
+        return ""
+    # JSON object with the id field
+    try:
+        data = resp.json()
+        if isinstance(data, dict):
+            return (data.get("routeid") or data.get("id") or data.get("route_id") or "").strip()
+        if isinstance(data, str):
+            return data.strip()
+    except (ValueError, requests.exceptions.JSONDecodeError):
+        pass
+    # Plain text id — strip surrounding quotes if any
+    return body.strip().strip('"').strip("'")
+
+
+def _parse_messages(resp: requests.Response) -> list[dict]:
+    """Parse a longpoll response that should be a JSON array of command
+    objects. Tolerates non-JSON responses by returning an empty list
+    rather than raising, so the polling loop can carry on."""
+    try:
+        data = resp.json()
+    except (ValueError, requests.exceptions.JSONDecodeError):
+        return []
+    if isinstance(data, list):
+        return [m for m in data if isinstance(m, dict)]
+    if isinstance(data, dict):
+        return [data]
+    return []
+
+
 def ping_version(cfg: AutorouterConfig) -> dict:
     """Health-check the API. Calls /system/version (no auth required)."""
     resp = requests.get(f"{cfg.base_url}/system/version", timeout=15)
@@ -238,10 +278,14 @@ def suggest_route(
         raise AutorouterError(
             f"POST /router failed: HTTP {resp.status_code} {resp.text[:500]}"
         )
-    data = resp.json()
-    route_id = data.get("routeid") or data.get("id") or data.get("route_id")
+    # The wiki examples show route IDs as plain strings like
+    # 'LFSB-LYTV-59156af893577'. The server returns the route_id either as
+    # raw text or as a JSON-encoded string — handle both.
+    route_id = _parse_route_id(resp)
     if not route_id:
-        raise AutorouterError(f"POST /router returned no routeid: {data}")
+        raise AutorouterError(
+            f"POST /router returned no route_id (body: {resp.text[:300]!r})"
+        )
 
     solution: dict | None = None
     logs: list[str] = []
@@ -257,9 +301,7 @@ def suggest_route(
                 raise AutorouterError(
                     f"longpoll failed: HTTP {poll_resp.status_code} {poll_resp.text[:300]}"
                 )
-            messages = poll_resp.json() or []
-            if not isinstance(messages, list):
-                messages = [messages]
+            messages = _parse_messages(poll_resp)
             for msg in messages:
                 if not isinstance(msg, dict):
                     continue
