@@ -575,8 +575,18 @@ def save_crew(name: str, members: list[dict], n_crew: int) -> int:
 
 
 def delete_poc_by_name(name: str) -> int:
+    """Supprime les POC dont le name OU le rank contient `name` (case-insensitive).
+    Plus permissif qu'un match exact pour attraper les variantes 'OF1 MERLIN',
+    'MERLIN F.', etc."""
+    needle = (name or "").strip()
+    if not needle:
+        return 0
+    pattern = f"%{needle}%"
     with connect() as c:
-        cur = c.execute("DELETE FROM poc WHERE name = ?", (name.strip(),))
+        cur = c.execute(
+            "DELETE FROM poc WHERE UPPER(name) LIKE UPPER(?) OR UPPER(rank) LIKE UPPER(?)",
+            (pattern, pattern),
+        )
         return cur.rowcount
 
 

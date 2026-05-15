@@ -22,7 +22,9 @@ Configuration is read from st.secrets under [autorouter]:
 """
 from __future__ import annotations
 
+import json as _json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -79,6 +81,9 @@ class AutorouterRoute:
     time_seconds: int = 0
     raw_solution: dict = field(default_factory=dict)
     log_messages: list[str] = field(default_factory=list)
+    # Persisted so the caller can later request a briefing pack against
+    # the same /flightplan/<routeid>/briefing endpoint.
+    route_id: str = ""
 
 
 class AutorouterError(Exception):
@@ -217,27 +222,27 @@ def _build_route_request(
     eobt_iso: str | None = None,
     alternate1: str | None = None,
     alternate2: str | None = None,
+    allow_vfr_downgrade: bool = False,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "departure": _airport_payload(departure),
         "destination": _airport_payload(destination),
-        # Don't force IFR-only — the user's missions are FRA defence flights
-        # that can mix IFR/VFR. autorouter will choose the cleanest option.
-        "vfrdowngrade": True,
     }
+    # vfrdowngrade fait que Eurocontrol IFPS crache WARN313 même sur des
+    # routes 100 % IFR — désactivé par défaut, activé seulement quand on
+    # sait qu'on a un aérodrome non-publié (FOB / militaire).
+    if allow_vfr_downgrade:
+        payload["vfrdowngrade"] = True
     if eobt_iso:
         payload["departuretime"] = eobt_iso
     if cruise_level is not None:
-        payload["minlevel"] = max(10, int(cruise_level) - 20)
-        payload["maxlevel"] = int(cruise_level) + 20
-    if aircraft_type:
-        # Pass an inline aircraft definition with just the ICAO type — the
-        # full aircraft profile (mass, perf) is on autorouter's side.
-        # Using aircraftid=0 selects their built-in standard aircraft (P28R),
-        # which works as a fallback if the inline definition is rejected.
-        payload["aircraftid"] = 0
-    else:
-        payload["aircraftid"] = 0
+        # Fenêtre large pour laisser autorouter choisir un FL routable
+        # selon les airways. Trop serré → internalerror.
+        payload["minlevel"] = max(10, int(cruise_level) - 60)
+        payload["maxlevel"] = int(cruise_level) + 60
+    # aircraftid=0 → P28R built-in (Arrow). Acceptable pour la plupart
+    # des trajets ; les contraintes perf restent gérées côté DIC.
+    payload["aircraftid"] = 0
     if alternate1:
         alt1 = _airport_payload(alternate1)
         if isinstance(alt1, str):
@@ -247,6 +252,16 @@ def _build_route_request(
         if isinstance(alt2, str):
             payload["alternate2"] = alt2
     return payload
+
+
+def _is_user_added(icao: str) -> bool:
+    ap = db.find_airport((icao or "").strip().upper())
+    if not ap:
+        return False
+    try:
+        return bool(ap["user_added"])
+    except (KeyError, IndexError):
+        return False
 
 
 def suggest_route(
@@ -275,10 +290,14 @@ def suggest_route(
     during longpoll are retried up to 3 times — the route is still
     running server-side, we just reconnect.
     """
+    # vfrdowngrade only when we know one end is a non-published FOB —
+    # otherwise it pollutes IFPS validation on standard IFR routes.
+    needs_vfr = _is_user_added(departure) or _is_user_added(destination)
     payload = _build_route_request(
         departure, destination, aircraft_type=aircraft_type,
         cruise_level=cruise_level, eobt_iso=eobt_iso,
         alternate1=alternate1, alternate2=alternate2,
+        allow_vfr_downgrade=needs_vfr,
     )
     headers = _auth_headers(cfg)
     resp = requests.post(
@@ -351,27 +370,38 @@ def suggest_route(
                                 "enrouteerror", "internalerror", "iterationerror",
                                 "siderror", "starerror", "validatorerror",
                             ) if msg.get(k)]
-                            # Friendly diagnosis for the common case: autorouter
-                            # only validates fully-IFR/GAT routes, so military /
-                            # non-published / VFR-mixed legs always fail with
-                            # the IFR/GAT WARN313 + internalerror combo.
                             log_blob = " ".join(logs).upper()
+                            # Only call it "non-IFR" when we actually asked for
+                            # vfrdowngrade (i.e. user-added FOB on one end).
+                            # On standard IFR airports, internalerror usually
+                            # means the default aircraft profile can't make it
+                            # or the FL/route constraints don't match airways.
                             non_ifr = (
-                                "internalerror" in err_flags
-                                and ("ENTIRELY IFR/GAT" in log_blob
-                                     or "TRAJECTORY INFO DISCARDED" in log_blob)
+                                needs_vfr
+                                and "internalerror" in err_flags
+                                and "ENTIRELY IFR/GAT" in log_blob
                             )
                             if non_ifr:
                                 raise AutorouterError(
                                     "Autorouter rejette les routes non-IFR pures. "
                                     "Cas typique : aérodrome militaire / non-publié "
-                                    "(TOUROU, KAINJI, FOB) ou portion VFR. "
+                                    "(TOUROU, KAINJI, FOB). "
                                     "Utilise la suggestion locale (✨)."
                                 )
+                            # Generic but actionable: surface what we know.
+                            tail = logs[-3:] if logs else []
+                            extras = ""
+                            if "internalerror" in err_flags and not tail:
+                                extras = (
+                                    " — Souvent : appareil de référence "
+                                    "(P28R par défaut) trop limité pour la distance/FL, "
+                                    "ou pas d'airways compatibles à ce FL. "
+                                    "Essaie un FL différent ou la suggestion locale."
+                                )
                             raise AutorouterError(
-                                "router stopped without a valid route. "
-                                f"flags: {err_flags or 'none'}. "
-                                f"Last logs: {logs[-3:] if logs else '—'}"
+                                f"Autorouter n'a pas trouvé de route valide "
+                                f"(flags: {err_flags or 'none'}).{extras} "
+                                + (f"Logs: {tail}" if tail else "")
                             )
                         # routesuccess=true but no `solution` command yet:
                         # wait one more poll cycle.
@@ -385,7 +415,9 @@ def suggest_route(
                 f"timeout après {poll_timeout_s}s sans solution. "
                 f"Logs: {logs[-3:] if logs else '—'}"
             )
-        return _normalise_solution(solution, fpl_fallback=last_fpl, logs=logs)
+        normalised = _normalise_solution(solution, fpl_fallback=last_fpl, logs=logs)
+        normalised.route_id = route_id
+        return normalised
     finally:
         # Best-effort close — ignore errors here, the session will time
         # out server-side anyway.
@@ -426,3 +458,332 @@ def _normalise_solution(
         raw_solution=solution,
         log_messages=logs,
     )
+
+
+# ─── Weather & NOTAMs ──────────────────────────────────────────────────────────
+
+@dataclass
+class MetarTaf:
+    icao: str = ""
+    metar: str = ""
+    taf: str = ""
+    error: str = ""
+
+
+def fetch_metartaf(cfg: AutorouterConfig, icao: str) -> MetarTaf:
+    """GET /met/metartaf/<icao> — returns latest METAR + TAF or empty fields.
+
+    Per the wiki, individual fields are null when unavailable. We squash to
+    empty strings so the UI can show '—' uniformly.
+    """
+    icao = (icao or "").strip().upper()
+    if not icao:
+        return MetarTaf(error="missing ICAO")
+    if not cfg.is_configured():
+        return MetarTaf(icao=icao, error="autorouter not configured")
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/met/metartaf/{icao}",
+            headers=_auth_headers(cfg), timeout=20,
+        )
+    except requests.exceptions.RequestException as e:
+        return MetarTaf(icao=icao, error=f"network: {e}")
+    if resp.status_code == 404:
+        return MetarTaf(icao=icao, error="no METAR/TAF for this station")
+    if resp.status_code != 200:
+        return MetarTaf(icao=icao, error=f"HTTP {resp.status_code}")
+    try:
+        data = resp.json()
+    except ValueError:
+        return MetarTaf(icao=icao, error="invalid JSON response")
+    return MetarTaf(
+        icao=icao,
+        metar=(data.get("metar") or "").strip(),
+        taf=(data.get("taf") or "").strip(),
+    )
+
+
+def fetch_metartaf_batch(cfg: AutorouterConfig, icaos: list[str]) -> dict[str, MetarTaf]:
+    """Parallel METAR/TAF fetch (one HTTP call per ICAO, 5 workers).
+
+    Skips user-added FOB airports (no METAR/TAF published). The autorouter
+    endpoint is per-station so we parallelise to keep total latency under
+    ~3 s for 6-8 airports.
+    """
+    targets = []
+    skipped: dict[str, MetarTaf] = {}
+    for ic in icaos:
+        ic_u = (ic or "").strip().upper()
+        if not ic_u or ic_u in skipped or any(t == ic_u for t in targets):
+            continue
+        ap = db.find_airport(ic_u)
+        if ap:
+            try:
+                if ap["user_added"]:
+                    skipped[ic_u] = MetarTaf(icao=ic_u, error="aérodrome non-publié (pas de METAR/TAF)")
+                    continue
+            except (KeyError, IndexError):
+                pass
+        targets.append(ic_u)
+
+    results: dict[str, MetarTaf] = dict(skipped)
+    if not targets:
+        return results
+    with ThreadPoolExecutor(max_workers=min(5, len(targets))) as ex:
+        for mt in ex.map(lambda ic: fetch_metartaf(cfg, ic), targets):
+            results[mt.icao] = mt
+    return results
+
+
+@dataclass
+class NotamRow:
+    """Decoded subset of an autorouter NOTAM row. The full row is kept in
+    `raw` for any consumer that wants the Garmin-format coords etc."""
+    id: int = 0
+    series: str = ""
+    number: int = 0
+    year: int = 0
+    itema: list[str] = field(default_factory=list)
+    iteme: str = ""           # the human-readable body
+    itemd: str | None = None  # schedule, may be null
+    itemf: str | None = None  # lower limit text
+    itemg: str | None = None  # upper limit text
+    fir: str = ""
+    startvalidity: int = 0
+    endvalidity: int = 0
+    traffic: str = ""
+    purpose: str = ""
+    scope: str = ""
+    type: str = ""
+    raw: dict = field(default_factory=dict)
+
+    @property
+    def notam_id(self) -> str:
+        return f"{self.series}{self.number:04d}/{self.year:02d}" if self.number else f"#{self.id}"
+
+
+def _decode_notam_row(row: dict) -> NotamRow:
+    return NotamRow(
+        id=int(row.get("id") or 0),
+        series=(row.get("series") or "").strip(),
+        number=int(row.get("number") or 0),
+        year=int(row.get("year") or 0),
+        itema=list(row.get("itema") or []),
+        iteme=(row.get("iteme") or "").strip(),
+        itemd=row.get("itemd"),
+        itemf=row.get("itemf"),
+        itemg=row.get("itemg"),
+        fir=(row.get("fir") or "").strip(),
+        startvalidity=int(row.get("startvalidity") or 0),
+        endvalidity=int(row.get("endvalidity") or 0),
+        traffic=(row.get("traffic") or "").strip(),
+        purpose=(row.get("purpose") or "").strip(),
+        scope=(row.get("scope") or "").strip(),
+        type=(row.get("type") or "").strip(),
+        raw=row,
+    )
+
+
+def fetch_notams(
+    cfg: AutorouterConfig,
+    icaos: list[str],
+    *,
+    startvalidity: int | None = None,
+    endvalidity: int | None = None,
+    limit: int = 100,
+) -> list[NotamRow]:
+    """GET /notam?itemas=[...]&… — fetches NOTAMs valid for the given
+    ICAO list inside the [startvalidity, endvalidity] window (Unix seconds).
+
+    The autorouter NOTAM DB is European/Eurocontrol-EAD only. For West
+    Africa (DI/DR/DN/DX) the response will be empty — we surface that
+    explicitly to the user instead of silently dropping it.
+    """
+    items = [(ic or "").strip().upper() for ic in icaos if (ic or "").strip()]
+    items = sorted(set(items))
+    if not items:
+        return []
+    if not cfg.is_configured():
+        return []
+    params: dict[str, Any] = {
+        "itemas": _json.dumps(items),
+        "offset": 0,
+        "limit": max(1, min(int(limit), 100)),
+    }
+    if startvalidity is not None:
+        params["startvalidity"] = int(startvalidity)
+    if endvalidity is not None:
+        params["endvalidity"] = int(endvalidity)
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/notam",
+            params=params, headers=_auth_headers(cfg), timeout=30,
+        )
+    except requests.exceptions.RequestException:
+        return []
+    if resp.status_code != 200:
+        return []
+    try:
+        data = resp.json()
+    except ValueError:
+        return []
+    rows = data.get("rows") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
+    return [_decode_notam_row(r) for r in rows if isinstance(r, dict)]
+
+
+def fetch_gramet(
+    cfg: AutorouterConfig, *,
+    waypoints: str, altitude_ft: int, departure_ts: int, totaleet_s: int,
+    fmt: str = "pdf",
+) -> tuple[bytes, str]:
+    """GET /met/gramet — coupe verticale météo le long de la route.
+
+    Returns (file_bytes, mime_type). Raises AutorouterError on failure.
+    The `waypoints` form (no FPL) is used so we work even when the route
+    text isn't a valid ICAO FPL string.
+    """
+    if not cfg.is_configured():
+        raise AutorouterError("autorouter not configured")
+    params = {
+        "waypoints": waypoints,
+        "altitude": int(altitude_ft),
+        "departuretime": int(departure_ts),
+        "totaleet": int(totaleet_s),
+        "format": fmt if fmt in ("pdf", "png") else "pdf",
+    }
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/met/gramet",
+            params=params, headers=_auth_headers(cfg), timeout=60,
+        )
+    except requests.exceptions.RequestException as e:
+        raise AutorouterError(f"network: {e}")
+    if resp.status_code != 200:
+        raise AutorouterError(f"GRAMET HTTP {resp.status_code}: {resp.text[:300]}")
+    mime = "application/pdf" if params["format"] == "pdf" else "image/png"
+    return resp.content, mime
+
+
+# ─── Briefing pack ─────────────────────────────────────────────────────────────
+
+# Ops-oriented preset : tout ce qui sert à l'attaché défense (atcbriefing,
+# milbulletin, atcharges) en plus du pack pilote standard. La sortie est un
+# PDF unique compilé par autorouter.
+BRIEFING_OPS_ITEMS = [
+    "navlog", "wb", "distances", "climb", "descent",
+    "metartaf", "gramet", "isobaric", "skewt", "sigwx", "mslp", "temsi",
+    "atcbriefing", "notam", "milbulletin", "icaofpl", "raim", "atcharges",
+]
+
+
+def request_briefing(
+    cfg: AutorouterConfig, route_id: str,
+    items: list[str] | None = None,
+) -> str:
+    """POST /flightplan/<routeid>/briefing (non-blocking download).
+
+    Returns a token to poll for completion. Use poll_briefing(token) and
+    fetch_briefing(token) to retrieve the PDF once ready.
+    """
+    if not route_id:
+        raise AutorouterError("route_id manquant — relance une suggestion autorouter d'abord.")
+    items = items or BRIEFING_OPS_ITEMS
+    try:
+        resp = requests.post(
+            f"{cfg.base_url}/flightplan/{route_id}/briefing",
+            data={"method": "download", "items": _json.dumps(items)},
+            headers=_auth_headers(cfg), timeout=30,
+        )
+    except requests.exceptions.RequestException as e:
+        raise AutorouterError(f"network: {e}")
+    if resp.status_code != 200:
+        raise AutorouterError(
+            f"POST /briefing HTTP {resp.status_code}: {resp.text[:300]}"
+        )
+    # Token returned as plain text or JSON-wrapped string.
+    body = (resp.text or "").strip()
+    try:
+        data = resp.json()
+        if isinstance(data, str):
+            return data.strip()
+        if isinstance(data, dict):
+            return (data.get("token") or data.get("id") or "").strip()
+    except (ValueError, requests.exceptions.JSONDecodeError):
+        pass
+    return body.strip('"').strip("'")
+
+
+def poll_briefing(cfg: AutorouterConfig, route_id: str, token: str) -> bool:
+    """Returns True when the briefing pack is ready (HTTP 200), False if 404."""
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/flightplan/{route_id}/briefing/{token}",
+            params={"poll": "1"},
+            headers=_auth_headers(cfg), timeout=20,
+        )
+    except requests.exceptions.RequestException:
+        return False
+    return resp.status_code == 200
+
+
+def fetch_briefing(cfg: AutorouterConfig, route_id: str, token: str) -> bytes:
+    """Download the PDF once poll_briefing returned True."""
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/flightplan/{route_id}/briefing/{token}",
+            headers=_auth_headers(cfg), timeout=120,
+        )
+    except requests.exceptions.RequestException as e:
+        raise AutorouterError(f"network: {e}")
+    if resp.status_code != 200:
+        raise AutorouterError(
+            f"GET briefing HTTP {resp.status_code}: {resp.text[:300]}"
+        )
+    return resp.content
+
+
+def fetch_briefing_pack(
+    cfg: AutorouterConfig, route_id: str, *,
+    items: list[str] | None = None,
+    poll_timeout_s: int = 240,
+    poll_interval_s: float = 4.0,
+) -> bytes:
+    """End-to-end : POST request, poll until ready, download. Synchronous
+    wrapper meant for Streamlit usage behind a spinner. autorouter peut
+    prendre 1-5 min pour un pack complet — d'où le poll_timeout_s long."""
+    token = request_briefing(cfg, route_id, items=items)
+    if not token:
+        raise AutorouterError("autorouter n'a pas renvoyé de token de briefing.")
+    deadline = time.time() + poll_timeout_s
+    while time.time() < deadline:
+        if poll_briefing(cfg, route_id, token):
+            return fetch_briefing(cfg, route_id, token)
+        time.sleep(poll_interval_s)
+    raise AutorouterError(
+        f"Briefing pas prêt après {poll_timeout_s}s. Réessaie plus tard."
+    )
+
+
+def format_notam(n: NotamRow) -> str:
+    """Render a NOTAM as the standard ICAO Q-line + A/B/C/E format."""
+    import datetime as _dt
+    def _fmt_ts(ts: int) -> str:
+        try:
+            return _dt.datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+        except (OverflowError, OSError, ValueError):
+            return "—"
+    lines = [f"{n.notam_id} NOTAM"]
+    if n.itema:
+        lines.append(f"A) {' '.join(n.itema)}")
+    lines.append(f"B) {_fmt_ts(n.startvalidity)}  C) {_fmt_ts(n.endvalidity)}")
+    if n.itemd:
+        lines.append(f"D) {n.itemd}")
+    if n.iteme:
+        lines.append(f"E) {n.iteme}")
+    if n.itemf:
+        lines.append(f"F) {n.itemf}")
+    if n.itemg:
+        lines.append(f"G) {n.itemg}")
+    return "\n".join(lines)

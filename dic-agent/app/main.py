@@ -458,7 +458,13 @@ def _run_dual_suggest(
                     "distance_nm": ar_route.distance_nm,
                     "time_min": ar_route.time_seconds // 60,
                     "logs_tail": (ar_route.log_messages or [])[-3:],
+                    "route_id": ar_route.route_id,
                 }
+                # Persist the latest successful autorouter route_id so the
+                # briefing PDF endpoint can be called later without re-running
+                # a suggestion. Keyed by leg index → simple to consume.
+                if ar_route.route_id:
+                    st.session_state.setdefault("_ar_routes", {})[idx] = ar_route.route_id
             except autorouter_client.AutorouterError as e:
                 result["ar_err"] = str(e)
     else:
@@ -485,7 +491,7 @@ def _render_dual_suggest(*, sid_key: str, idx: int, kprefix: str) -> None:
             if r["extras"]:
                 for x in r["extras"]:
                     st.caption("• " + x)
-            if st.button("✅ Appliquer", key=f"{kprefix}_apply_local", use_container_width=True):
+            if st.button("✅ Appliquer", key=f"{kprefix}_apply_local", width="stretch"):
                 st.session_state[f"_pending_route_{sid_key}_{idx}"] = r["route_text"]
                 st.session_state[f"_pending_suggest_msg_{sid_key}_{idx}"] = (
                     f"Appliquée : route locale `{r['route_text']}` ({r['distance_nm']:.0f} NM)"
@@ -503,7 +509,7 @@ def _render_dual_suggest(*, sid_key: str, idx: int, kprefix: str) -> None:
             st.caption(f"{r['distance_nm']:.0f} NM · {r['time_min']} min")
             if r["logs_tail"]:
                 st.caption("IFPS : " + " · ".join(r["logs_tail"]))
-            if st.button("✅ Appliquer", key=f"{kprefix}_apply_ar", use_container_width=True):
+            if st.button("✅ Appliquer", key=f"{kprefix}_apply_ar", width="stretch"):
                 st.session_state[f"_pending_route_{sid_key}_{idx}"] = r["route_text"]
                 st.session_state[f"_pending_suggest_msg_{sid_key}_{idx}"] = (
                     f"Appliquée : route autorouter `{r['route_text']}` ({r['distance_nm']:.0f} NM)"
@@ -516,6 +522,240 @@ def _render_dual_suggest(*, sid_key: str, idx: int, kprefix: str) -> None:
     if st.button("✕ Fermer les suggestions", key=f"{kprefix}_close_sugg"):
         st.session_state.pop(state_key, None)
         st.rerun()
+
+
+def _render_briefing_section(*, legs: list[dict]) -> None:
+    """Briefing météo (METAR/TAF) + NOTAMs pour tous les aérodromes de la
+    mission. Affiché en page Preview, derrière un bouton unique pour ne pas
+    saturer le réseau à chaque rerun.
+
+    Les résultats sont mis en cache dans st.session_state (clé _briefing_*)
+    et invalidés dès qu'un aérodrome change — l'utilisateur peut forcer le
+    rafraîchissement via le bouton "🔄 Rafraîchir".
+    """
+    from app import autorouter_client
+
+    icaos: list[str] = []
+    for leg in legs:
+        for k in ("origin", "destination", "alternate"):
+            v = (leg.get(k) or "").strip().upper()
+            if v and v not in icaos:
+                icaos.append(v)
+    if not icaos:
+        return
+
+    ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
+
+    # Fenêtre de validité : du plus tôt EOBT au plus tard EOBT + 24 h.
+    times: list[dt.datetime] = []
+    for leg in legs:
+        eobt = leg.get("eobt")
+        if isinstance(eobt, dt.datetime):
+            times.append(eobt)
+    start_ts = int(min(times).timestamp()) if times else int(dt.datetime.utcnow().timestamp())
+    end_ts = int((max(times) + dt.timedelta(hours=24)).timestamp()) if times else start_ts + 86400
+
+    sig = f"{','.join(icaos)}|{start_ts}|{end_ts}"
+    cached_sig_key = "_briefing_sig"
+    cached_data_key = "_briefing_data"
+    have_cache = st.session_state.get(cached_sig_key) == sig
+
+    bc1, bc2 = st.columns([3, 1])
+    with bc1:
+        st.markdown("### 🌤️ Briefing météo & NOTAMs")
+        st.caption(
+            f"Aérodromes : {', '.join(icaos)}  ·  "
+            f"Fenêtre NOTAM : {dt.datetime.utcfromtimestamp(start_ts):%Y-%m-%d %H:%MZ} → "
+            f"{dt.datetime.utcfromtimestamp(end_ts):%Y-%m-%d %H:%MZ}"
+        )
+    with bc2:
+        st.write("")
+        label = "🔄 Rafraîchir" if have_cache else "🌤️ Charger"
+        if st.button(label, key="briefing_fetch", width="stretch"):
+            if not ar_cfg.is_configured():
+                st.error("Autorouter pas configuré (voir page ⚙ Admin).")
+            else:
+                with st.spinner("Météo (parallèle) + NOTAMs…"):
+                    wx = autorouter_client.fetch_metartaf_batch(ar_cfg, icaos)
+                    notams = autorouter_client.fetch_notams(
+                        ar_cfg, icaos,
+                        startvalidity=start_ts, endvalidity=end_ts,
+                    )
+                st.session_state[cached_sig_key] = sig
+                st.session_state[cached_data_key] = {"wx": wx, "notams": notams}
+                st.rerun()
+
+    if not have_cache:
+        st.info("Clique sur **🌤️ Charger** pour récupérer METAR/TAF et NOTAMs depuis autorouter.")
+        _render_gramet_section(legs=legs, ar_cfg=ar_cfg)
+        return
+
+    data = st.session_state.get(cached_data_key) or {}
+    wx: dict = data.get("wx") or {}
+    notams: list = data.get("notams") or []
+
+    # NOTAMs groupés par premier ICAO de l'itema.
+    notams_by_icao: dict[str, list] = {ic: [] for ic in icaos}
+    for n in notams:
+        for ic in n.itema:
+            ic_u = ic.strip().upper()
+            if ic_u in notams_by_icao:
+                notams_by_icao[ic_u].append(n)
+
+    for ic in icaos:
+        ap = db.find_airport(ic)
+        title_extras = f" · {ap['name']}" if ap else ""
+        n_notams = len(notams_by_icao.get(ic, []))
+        label = f"**{ic}**{title_extras}  ·  {n_notams} NOTAM(s)"
+        with st.expander(label, expanded=False):
+            mt = wx.get(ic)
+            if mt is None:
+                st.caption("METAR/TAF : non chargé.")
+            elif mt.error:
+                st.caption(f"METAR/TAF : _{mt.error}_")
+            else:
+                if mt.metar:
+                    st.markdown("**METAR**")
+                    st.code(mt.metar, language="text")
+                else:
+                    st.caption("Pas de METAR.")
+                if mt.taf:
+                    st.markdown("**TAF**")
+                    st.code(mt.taf, language="text")
+                else:
+                    st.caption("Pas de TAF.")
+
+            ns = notams_by_icao.get(ic, [])
+            if ns:
+                st.markdown("**NOTAMs**")
+                for n in ns:
+                    st.code(autorouter_client.format_notam(n), language="text")
+            else:
+                st.caption(
+                    "Aucun NOTAM dans la fenêtre. "
+                    "_(Note : autorouter ne couvre que la zone Eurocontrol EAD — "
+                    "les aérodromes hors Europe peuvent rester vides.)_"
+                )
+
+    _render_gramet_section(legs=legs, ar_cfg=ar_cfg)
+
+
+def _render_gramet_section(*, legs: list[dict], ar_cfg) -> None:
+    """GRAMET (coupe verticale météo) par leg. Téléchargeable en PDF.
+
+    Particulièrement utile en Afrique de l'Ouest où la convection (CB,
+    harmattan, mousson) varie vite — la coupe montre les couches nuageuses
+    et les vents en altitude le long de la route.
+    """
+    from app import autorouter_client
+    valid_legs = [
+        l for l in legs
+        if l.get("origin") and l.get("destination") and isinstance(l.get("eobt"), dt.datetime)
+    ]
+    if not valid_legs:
+        return
+    st.markdown("#### 📈 GRAMET (coupe verticale météo)")
+    st.caption(
+        "Téléchargeable en PDF par leg. Synchrone : 5-15 s par appel."
+    )
+    for i, leg in enumerate(valid_legs):
+        origin = leg["origin"].strip().upper()
+        destination = leg["destination"].strip().upper()
+        route_text = (leg.get("route_text") or "").strip()
+        # autorouter resolves waypoints by name; pass dep + enroute + dest
+        # so its parser has a complete chain.
+        wpts = " ".join([origin] + route_text.split() + [destination]) if route_text else f"{origin} {destination}"
+        fl = int(leg.get("fl") or 90)
+        tas = int(leg.get("tas") or 150)
+        eobt: dt.datetime = leg["eobt"]
+        # Estimate flight duration from great-circle / TAS as a fallback —
+        # GRAMET only needs an envelope, not a precise EET.
+        eet_s = 0
+        ap_o = db.find_airport(origin)
+        ap_d = db.find_airport(destination)
+        if ap_o and ap_d:
+            try:
+                from app import route_engine
+                dist_nm = route_engine._great_circle_nm(
+                    (ap_o["lat"], ap_o["lon"]), (ap_d["lat"], ap_d["lon"])
+                )
+                eet_s = int((dist_nm / max(60, tas)) * 3600)
+            except Exception:
+                pass
+        if eet_s <= 0:
+            eet_s = 3600  # 1h fallback
+        key = f"gramet_{i}_{origin}_{destination}"
+        if st.button(
+            f"📈 GRAMET leg {i + 1} : {origin} → {destination} (FL{fl:03d})",
+            key=key,
+        ):
+            if not ar_cfg.is_configured():
+                st.error("Autorouter pas configuré (voir page ⚙ Admin).")
+            else:
+                with st.spinner("Génération GRAMET…"):
+                    try:
+                        data, mime = autorouter_client.fetch_gramet(
+                            ar_cfg,
+                            waypoints=wpts,
+                            altitude_ft=fl * 100,
+                            departure_ts=int(eobt.timestamp()),
+                            totaleet_s=eet_s,
+                            fmt="pdf",
+                        )
+                        st.download_button(
+                            f"⬇️ GRAMET_{origin}_{destination}.pdf",
+                            data=data, mime=mime,
+                            file_name=f"GRAMET_{origin}_{destination}.pdf",
+                            key=f"{key}_dl",
+                        )
+                    except autorouter_client.AutorouterError as e:
+                        st.error(f"GRAMET : {e}")
+
+    # Briefing pack PDF (ops-oriented) — nécessite un route_id obtenu via
+    # une suggestion autorouter récente. Le bouton est désactivé tant qu'on
+    # n'a pas tourné le 🤖 Suggérer avec succès côté autorouter sur un leg.
+    ar_routes: dict = st.session_state.get("_ar_routes") or {}
+    st.markdown("#### 📦 Briefing pack (ops complet, PDF)")
+    st.caption(
+        "Pack autorouter complet : navlog, W&B, perfs, METAR/TAF, GRAMET, "
+        "SIGWX, NOTAM graphique, **ATC briefing + milbulletin + ATC charges** "
+        "(orienté ops). Génération asynchrone côté autorouter : 1-5 min."
+    )
+    if not ar_routes:
+        st.info(
+            "Pour activer ce bouton : lance d'abord **🤖 Suggérer** sur un "
+            "leg en page Legs avec succès côté autorouter. Le `route_id` "
+            "récupéré sera réutilisé ici."
+        )
+    else:
+        for leg_idx, route_id in sorted(ar_routes.items()):
+            if leg_idx >= len(valid_legs):
+                continue
+            l = valid_legs[leg_idx] if leg_idx < len(valid_legs) else None
+            if not l:
+                continue
+            label = (
+                f"📦 Briefing PDF leg {leg_idx + 1} : "
+                f"{l['origin']} → {l['destination']}"
+            )
+            if st.button(label, key=f"briefing_{leg_idx}_{route_id}"):
+                if not ar_cfg.is_configured():
+                    st.error("Autorouter pas configuré (voir page ⚙ Admin).")
+                else:
+                    with st.spinner("Compilation du briefing par autorouter (1-5 min)…"):
+                        try:
+                            pdf_bytes = autorouter_client.fetch_briefing_pack(
+                                ar_cfg, route_id,
+                                items=autorouter_client.BRIEFING_OPS_ITEMS,
+                            )
+                            st.download_button(
+                                f"⬇️ Briefing_{l['origin']}_{l['destination']}.pdf",
+                                data=pdf_bytes, mime="application/pdf",
+                                file_name=f"Briefing_{l['origin']}_{l['destination']}.pdf",
+                                key=f"briefing_dl_{leg_idx}",
+                            )
+                        except autorouter_client.AutorouterError as e:
+                            st.error(f"Briefing : {e}")
 
 
 def _leg_editor(idx: int, leg: dict) -> dict:
@@ -597,7 +837,7 @@ def _leg_editor(idx: int, leg: dict) -> dict:
             "🤖 Suggérer",
             key=f"{kprefix}_suggest",
             help="Lance les deux moteurs (A* local + autorouter.aero) et affiche les deux routes. Tu choisis celle à appliquer.",
-            use_container_width=True,
+            width="stretch",
         ):
             if origin and destination:
                 _run_dual_suggest(
@@ -783,7 +1023,7 @@ with st.sidebar:
         btn_help = subtitle
         clicked = st.button(
             btn_label, key=f"nav_step_{i}", help=btn_help,
-            use_container_width=True,
+            width="stretch",
             type="primary" if is_current else "secondary",
         )
         if clicked:
@@ -816,7 +1056,7 @@ for i, (num, title, _sub) in enumerate(PAGES):
         clicked = st.button(
             f"{num} {title}",
             key=f"topnav_{i}",
-            use_container_width=True,
+            width="stretch",
             type="primary" if is_current else "secondary",
         )
         if clicked:
@@ -829,22 +1069,27 @@ st.divider()
 
 
 def _step_nav_footer() -> None:
-    """Big Précédent / Suivant CTAs at the bottom of each step."""
+    """Big Précédent / Suivant CTAs at the bottom of each step.
+
+    Admin (page_idx 3) est hors flux linéaire : on n'y propose pas de
+    Précédent → Preview et on ne propose pas Suivant → Admin depuis
+    Preview. L'accès Admin se fait uniquement via la sidebar."""
+    LINEAR_MAX = 2  # last sequential page (Preview & export)
     st.divider()
     c_prev, c_spacer, c_next = st.columns([2, 3, 2])
     with c_prev:
-        if page_idx > 0:
+        if 0 < page_idx <= LINEAR_MAX:
             if st.button(
                 f"← Précédent : {PAGES[page_idx - 1][1]}",
-                key=f"prev_step_{page_idx}", use_container_width=True,
+                key=f"prev_step_{page_idx}", width="stretch",
             ):
                 _goto_page(page_idx - 1)
                 st.rerun()
     with c_next:
-        if page_idx < len(PAGES) - 1:
+        if page_idx < LINEAR_MAX:
             if st.button(
                 f"Suivant : {PAGES[page_idx + 1][1]}  →",
-                key=f"next_step_{page_idx}", use_container_width=True,
+                key=f"next_step_{page_idx}", width="stretch",
                 type="primary",
             ):
                 _goto_page(page_idx + 1)
@@ -1114,7 +1359,7 @@ if page_idx == 2:
                     "TAS": seg.tas,
                 }
             )
-        st.dataframe(rows_view, use_container_width=True)
+        st.dataframe(rows_view, width="stretch")
 
         leg_input = {
             "origin": leg["origin"],
@@ -1253,6 +1498,9 @@ if page_idx == 2:
                 file_name="FPL_" + (mission.get("registration") or "mission").replace("/", "-") + ".txt",
                 mime="text/plain",
             )
+
+    st.divider()
+    _render_briefing_section(legs=st.session_state.legs)
 
     _step_nav_footer()
 
