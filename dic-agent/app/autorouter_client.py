@@ -217,27 +217,27 @@ def _build_route_request(
     eobt_iso: str | None = None,
     alternate1: str | None = None,
     alternate2: str | None = None,
+    allow_vfr_downgrade: bool = False,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "departure": _airport_payload(departure),
         "destination": _airport_payload(destination),
-        # Don't force IFR-only — the user's missions are FRA defence flights
-        # that can mix IFR/VFR. autorouter will choose the cleanest option.
-        "vfrdowngrade": True,
     }
+    # vfrdowngrade fait que Eurocontrol IFPS crache WARN313 même sur des
+    # routes 100 % IFR — désactivé par défaut, activé seulement quand on
+    # sait qu'on a un aérodrome non-publié (FOB / militaire).
+    if allow_vfr_downgrade:
+        payload["vfrdowngrade"] = True
     if eobt_iso:
         payload["departuretime"] = eobt_iso
     if cruise_level is not None:
-        payload["minlevel"] = max(10, int(cruise_level) - 20)
-        payload["maxlevel"] = int(cruise_level) + 20
-    if aircraft_type:
-        # Pass an inline aircraft definition with just the ICAO type — the
-        # full aircraft profile (mass, perf) is on autorouter's side.
-        # Using aircraftid=0 selects their built-in standard aircraft (P28R),
-        # which works as a fallback if the inline definition is rejected.
-        payload["aircraftid"] = 0
-    else:
-        payload["aircraftid"] = 0
+        # Fenêtre large pour laisser autorouter choisir un FL routable
+        # selon les airways. Trop serré → internalerror.
+        payload["minlevel"] = max(10, int(cruise_level) - 60)
+        payload["maxlevel"] = int(cruise_level) + 60
+    # aircraftid=0 → P28R built-in (Arrow). Acceptable pour la plupart
+    # des trajets ; les contraintes perf restent gérées côté DIC.
+    payload["aircraftid"] = 0
     if alternate1:
         alt1 = _airport_payload(alternate1)
         if isinstance(alt1, str):
@@ -247,6 +247,16 @@ def _build_route_request(
         if isinstance(alt2, str):
             payload["alternate2"] = alt2
     return payload
+
+
+def _is_user_added(icao: str) -> bool:
+    ap = db.find_airport((icao or "").strip().upper())
+    if not ap:
+        return False
+    try:
+        return bool(ap["user_added"])
+    except (KeyError, IndexError):
+        return False
 
 
 def suggest_route(
@@ -275,10 +285,14 @@ def suggest_route(
     during longpoll are retried up to 3 times — the route is still
     running server-side, we just reconnect.
     """
+    # vfrdowngrade only when we know one end is a non-published FOB —
+    # otherwise it pollutes IFPS validation on standard IFR routes.
+    needs_vfr = _is_user_added(departure) or _is_user_added(destination)
     payload = _build_route_request(
         departure, destination, aircraft_type=aircraft_type,
         cruise_level=cruise_level, eobt_iso=eobt_iso,
         alternate1=alternate1, alternate2=alternate2,
+        allow_vfr_downgrade=needs_vfr,
     )
     headers = _auth_headers(cfg)
     resp = requests.post(
@@ -351,27 +365,38 @@ def suggest_route(
                                 "enrouteerror", "internalerror", "iterationerror",
                                 "siderror", "starerror", "validatorerror",
                             ) if msg.get(k)]
-                            # Friendly diagnosis for the common case: autorouter
-                            # only validates fully-IFR/GAT routes, so military /
-                            # non-published / VFR-mixed legs always fail with
-                            # the IFR/GAT WARN313 + internalerror combo.
                             log_blob = " ".join(logs).upper()
+                            # Only call it "non-IFR" when we actually asked for
+                            # vfrdowngrade (i.e. user-added FOB on one end).
+                            # On standard IFR airports, internalerror usually
+                            # means the default aircraft profile can't make it
+                            # or the FL/route constraints don't match airways.
                             non_ifr = (
-                                "internalerror" in err_flags
-                                and ("ENTIRELY IFR/GAT" in log_blob
-                                     or "TRAJECTORY INFO DISCARDED" in log_blob)
+                                needs_vfr
+                                and "internalerror" in err_flags
+                                and "ENTIRELY IFR/GAT" in log_blob
                             )
                             if non_ifr:
                                 raise AutorouterError(
                                     "Autorouter rejette les routes non-IFR pures. "
                                     "Cas typique : aérodrome militaire / non-publié "
-                                    "(TOUROU, KAINJI, FOB) ou portion VFR. "
+                                    "(TOUROU, KAINJI, FOB). "
                                     "Utilise la suggestion locale (✨)."
                                 )
+                            # Generic but actionable: surface what we know.
+                            tail = logs[-3:] if logs else []
+                            extras = ""
+                            if "internalerror" in err_flags and not tail:
+                                extras = (
+                                    " — Souvent : appareil de référence "
+                                    "(P28R par défaut) trop limité pour la distance/FL, "
+                                    "ou pas d'airways compatibles à ce FL. "
+                                    "Essaie un FL différent ou la suggestion locale."
+                                )
                             raise AutorouterError(
-                                "router stopped without a valid route. "
-                                f"flags: {err_flags or 'none'}. "
-                                f"Last logs: {logs[-3:] if logs else '—'}"
+                                f"Autorouter n'a pas trouvé de route valide "
+                                f"(flags: {err_flags or 'none'}).{extras} "
+                                + (f"Logs: {tail}" if tail else "")
                             )
                         # routesuccess=true but no `solution` command yet:
                         # wait one more poll cycle.
