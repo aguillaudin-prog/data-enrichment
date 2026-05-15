@@ -268,7 +268,7 @@ def _poc_picker(key_prefix: str) -> dict:
         c1, c2, c3 = st.columns(3)
         with c1:
             new_name = st.text_input(
-                "POC (grade + nom, ex. OF1 MERLIN)", key=f"{key_prefix}_poc_new_name",
+                "POC (grade + nom, ex. OFFICIER TRANSIT)", key=f"{key_prefix}_poc_new_name",
             )
         with c2:
             new_email = st.text_input(
@@ -707,6 +707,7 @@ PAGES = [
     ("1.", "Mission & profils", "Avion, équipage, compagnie"),
     ("2.", "Legs", "Itinéraire, dates, route"),
     ("3.", "Preview & export", "Génère le .docx DIC"),
+    ("⚙", "Admin", "Aérodromes hors ICAO, API autorouter, config"),
 ]
 
 
@@ -749,91 +750,8 @@ with st.sidebar:
     # keep working without an inline string.
     template_format = "FRA"
 
-    # ── User airports management (FOB / military bases without ICAO) ──
-    with st.expander("🛩️ Aérodromes opérationnels (sans ICAO)"):
-        user_aps = db.list_user_airports()
-        if user_aps:
-            st.caption(f"{len(user_aps)} aérodrome(s) déjà en base :")
-            for ap in user_aps:
-                cols = st.columns([3, 1])
-                with cols[0]:
-                    st.markdown(
-                        f"**{ap['icao']}** — {ap['name']}  "
-                        f"({ap['country_iso']})  ·  "
-                        f"`{ap['lat']:.4f}°, {ap['lon']:.4f}°`"
-                    )
-                with cols[1]:
-                    if st.button("🗑️", key=f"del_uap_{ap['icao']}", help="Supprimer"):
-                        db.delete_user_airport(ap["icao"])
-                        st.rerun()
-        else:
-            st.caption("Aucun aérodrome opérationnel en base.")
-        st.markdown("**Ajouter :**")
-        c1, c2 = st.columns(2)
-        with c1:
-            new_label = st.text_input(
-                "Identifiant (ex. TOUROU, KAINJI)",
-                key="uap_label",
-                help="Le nom court qu'utilisera l'agent comme origin/destination",
-            ).strip().upper()
-            new_name = st.text_input(
-                "Nom complet (ex. Kainji NAFB)", key="uap_name",
-            ).strip()
-            new_country = st.text_input(
-                "Pays (ISO 2-letter, ex. BJ, NG)", key="uap_country",
-                max_chars=2,
-            ).strip().upper()
-        with c2:
-            new_lat = st.number_input(
-                "Latitude (°N+ / S-)", value=0.0, format="%.6f", key="uap_lat",
-            )
-            new_lon = st.number_input(
-                "Longitude (°E+ / W-)", value=0.0, format="%.6f", key="uap_lon",
-            )
-            is_mil = st.checkbox("Militaire", value=True, key="uap_mil")
-        if new_label and new_name and st.button("💾 Sauver", key="uap_save"):
-            db.save_user_airport(
-                icao=new_label, name=new_name,
-                country_iso=new_country or "",
-                lat=float(new_lat), lon=float(new_lon),
-                is_military=is_mil,
-            )
-            st.success(f"Aérodrome {new_label} ajouté.")
-            st.rerun()
-
-    st.divider()
-    with st.expander("🌐 Autorouter API (suggestion approfondie)"):
-        from app import autorouter_client
-        ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
-        if ar_cfg.is_configured():
-            st.caption(f"✓ Configuré — `{ar_cfg.base_url}`")
-            if st.button("🔌 Test connexion", key="ar_test"):
-                try:
-                    info = autorouter_client.ping_version(ar_cfg)
-                    st.success(
-                        f"API v{info.get('major')}.{info.get('minor')}.{info.get('patch')} "
-                        f"({'prod' if info.get('production') else 'sandbox'})"
-                    )
-                    # Test the token endpoint too (proves credentials work)
-                    try:
-                        autorouter_client._get_token(ar_cfg)
-                        st.success("Token OAuth obtenu — credentials valides.")
-                    except autorouter_client.AutorouterError as e:
-                        st.error(f"Token : {e}")
-                except autorouter_client.AutorouterError as e:
-                    st.error(str(e))
-        else:
-            st.caption(
-                "Pas configuré. Ajoute dans Streamlit Cloud → Settings → Secrets :"
-            )
-            st.code(
-                "[autorouter]\n"
-                'base_url = "https://api.autorouter.aero/v1.0"\n'
-                'token_url = "https://api.autorouter.aero/v1.0/oauth2/token"\n'
-                'client_id = "ton.email@example.org"\n'
-                'client_secret = "ton-mot-de-passe-autorouter"\n',
-                language="toml",
-            )
+    # Admin sections (aérodromes hors ICAO, autorouter API) ont migré
+    # vers la 4e page "⚙ Admin" pour désencombrer la sidebar.
 
     st.divider()
     st.caption(
@@ -1288,6 +1206,102 @@ if page_idx == 2:
                 data=full_text,
                 file_name="FPL_" + (mission.get("registration") or "mission").replace("/", "-") + ".txt",
                 mime="text/plain",
+            )
+
+    _step_nav_footer()
+
+
+if page_idx == 3:
+    st.caption(
+        "Configuration et données opérationnelles. Ces sections n'impactent pas "
+        "la génération du DIC tant que tu n'en as pas besoin."
+    )
+
+    with st.expander("🛩️ Aérodromes opérationnels (sans ICAO)", expanded=True):
+        st.markdown(
+            "Aérodromes / points de poser sans code ICAO publié (FOB, base militaire). "
+            "Ils restent en base après seed et sont utilisables comme origin/destination."
+        )
+        user_aps = db.list_user_airports()
+        if user_aps:
+            st.caption(f"{len(user_aps)} aérodrome(s) en base :")
+            for ap in user_aps:
+                cols = st.columns([3, 1])
+                with cols[0]:
+                    st.markdown(
+                        f"**{ap['icao']}** — {ap['name']}  "
+                        f"({ap['country_iso']})  ·  "
+                        f"`{ap['lat']:.4f}°, {ap['lon']:.4f}°`"
+                    )
+                with cols[1]:
+                    if st.button("🗑️", key=f"del_uap_{ap['icao']}", help="Supprimer"):
+                        db.delete_user_airport(ap["icao"])
+                        st.rerun()
+        else:
+            st.caption("Aucun aérodrome opérationnel en base.")
+        st.markdown("**Ajouter :**")
+        c1, c2 = st.columns(2)
+        with c1:
+            new_label = st.text_input(
+                "Identifiant (ex. TOUROU, KAINJI)",
+                key="uap_label",
+                help="Le nom court qu'utilisera l'agent comme origin/destination",
+            ).strip().upper()
+            new_name = st.text_input(
+                "Nom complet (ex. Kainji NAFB)", key="uap_name",
+            ).strip()
+            new_country = st.text_input(
+                "Pays (ISO 2-letter, ex. BJ, NG)", key="uap_country",
+                max_chars=2,
+            ).strip().upper()
+        with c2:
+            new_lat = st.number_input(
+                "Latitude (°N+ / S-)", value=0.0, format="%.6f", key="uap_lat",
+            )
+            new_lon = st.number_input(
+                "Longitude (°E+ / W-)", value=0.0, format="%.6f", key="uap_lon",
+            )
+            is_mil = st.checkbox("Militaire", value=True, key="uap_mil")
+        if new_label and new_name and st.button("💾 Sauver", key="uap_save"):
+            db.save_user_airport(
+                icao=new_label, name=new_name,
+                country_iso=new_country or "",
+                lat=float(new_lat), lon=float(new_lon),
+                is_military=is_mil,
+            )
+            st.success(f"Aérodrome {new_label} ajouté.")
+            st.rerun()
+
+    with st.expander("🌐 Autorouter API (suggestion approfondie)", expanded=True):
+        from app import autorouter_client
+        ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
+        if ar_cfg.is_configured():
+            st.caption(f"✓ Configuré — `{ar_cfg.base_url}`")
+            if st.button("🔌 Test connexion", key="ar_test"):
+                try:
+                    info = autorouter_client.ping_version(ar_cfg)
+                    st.success(
+                        f"API v{info.get('major')}.{info.get('minor')}.{info.get('patch')} "
+                        f"({'prod' if info.get('production') else 'sandbox'})"
+                    )
+                    try:
+                        autorouter_client._get_token(ar_cfg)
+                        st.success("Token OAuth obtenu — credentials valides.")
+                    except autorouter_client.AutorouterError as e:
+                        st.error(f"Token : {e}")
+                except autorouter_client.AutorouterError as e:
+                    st.error(str(e))
+        else:
+            st.caption(
+                "Pas configuré. Ajoute dans Streamlit Cloud → Settings → Secrets :"
+            )
+            st.code(
+                "[autorouter]\n"
+                'base_url = "https://api.autorouter.aero/v1.0"\n'
+                'token_url = "https://api.autorouter.aero/v1.0/oauth2/token"\n'
+                'client_id = "ton.email@example.org"\n'
+                'client_secret = "ton-mot-de-passe-autorouter"\n',
+                language="toml",
             )
 
     _step_nav_footer()

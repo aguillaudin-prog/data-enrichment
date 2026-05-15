@@ -34,7 +34,7 @@ def _common_mission(fmt: str = "FRA") -> dict:
         "vip_title": "TBN",
         "dg_details": "NIL",
         "remarks": "",
-        "poc_name": "OF1 MERLIN",
+        "poc_name": "OFFICIER TRANSIT",
         "poc_phone": "+ 225 07 15 013 761",
         "poc_email_personal": "cos-det14.j10@intradef.gouv.fr",
         "poc_email_functional": "",
