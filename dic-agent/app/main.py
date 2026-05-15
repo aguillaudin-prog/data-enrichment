@@ -21,6 +21,51 @@ from app import db, docx_generator, fpl_exporter, route_engine, route_suggester
 
 st.set_page_config(page_title="DIC Agent", layout="wide")
 
+
+def _enforce_auth() -> None:
+    """Streamlit Cloud login gate.
+
+    Reads the user/password matrix from `st.secrets` (set in the Streamlit
+    Cloud Secrets UI for the deployed app, or in `.streamlit/secrets.toml`
+    locally). If `[users]` is absent in secrets, auth is bypassed — useful
+    for local dev. On the deployed app the secrets are set, so every visit
+    requires login.
+    """
+    if "users" not in st.secrets:
+        return  # local dev mode, no auth
+    import streamlit_authenticator as stauth
+    credentials = {
+        "usernames": {
+            uname: {
+                "email": data.get("email", ""),
+                "name": data.get("name", uname),
+                "password": data["password_hash"],
+            }
+            for uname, data in st.secrets["users"].items()
+        }
+    }
+    cookie = st.secrets.get("cookie", {"name": "dic_auth", "key": "change_me", "expiry_days": 7})
+    authenticator = stauth.Authenticate(
+        credentials,
+        cookie.get("name", "dic_auth"),
+        cookie.get("key", "change_me"),
+        int(cookie.get("expiry_days", 7)),
+    )
+    authenticator.login(location="main", fields={"Form name": "Connexion DIC Agent"})
+    status = st.session_state.get("authentication_status")
+    if status is False:
+        st.error("Identifiants incorrects.")
+        st.stop()
+    if status is None:
+        st.warning("Connecte-toi pour accéder à l'agent.")
+        st.stop()
+    with st.sidebar:
+        st.caption(f"👤 Connecté : **{st.session_state.get('name', '')}**")
+        authenticator.logout("Déconnexion", "sidebar")
+
+
+_enforce_auth()
+
 DB_FILE = Path(__file__).resolve().parent.parent / "data" / "dic.sqlite"
 if not DB_FILE.exists():
     st.error(

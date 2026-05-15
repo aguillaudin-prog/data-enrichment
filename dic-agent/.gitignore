@@ -1,5 +1,8 @@
 data/*.sqlite
 data/*.sqlite-journal
+# Exception: the production seeded SQLite is bundled via git-lfs so Streamlit
+# Cloud has the full nav/CIFP data on first boot.
+!data/dic.sqlite
 
 # Downloaded datasets (OurAirports, Natural Earth) — not committed
 seeds/airports.csv
@@ -23,6 +26,7 @@ out/
 .env.local
 *.key
 *.pem
+.streamlit/secrets.toml
 
 # OpenAIP cached data per region
 seeds/openaip_*.json
