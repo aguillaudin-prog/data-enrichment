@@ -112,6 +112,48 @@ def seed_aircraft() -> None:
     print(f"Seeded {len(DEFAULT_AIRCRAFT)} aircraft profiles.")
 
 
+# Aérodromes opérationnels sans code ICAO publié (FOB, AFB militaire,
+# points de poser). Stockés via save_user_airport avec user_added=1 — le
+# seed OurAirports ne les écrase jamais. L'utilisateur peut en ajouter
+# d'autres via l'UI Streamlit (section 'Aérodromes opérationnels' du tab
+# Mission).
+USER_AIRPORTS = [
+    {
+        # Position de Tourou en Bénin, près de la frontière Nigeria. Sert
+        # de point de départ aux missions DIC vers Kainji NAFB. Coords
+        # tirées du point de frontière des DIC référence (N 9°34'45.56" /
+        # E 3°14'7.09").
+        "icao": "TOUROU",
+        "name": "Tourou",
+        "country_iso": "BJ",
+        "lat": 9 + 34 / 60 + 45.56 / 3600,   # 9.579322
+        "lon": 3 + 14 / 60 + 7.09 / 3600,    # 3.235303
+        "is_military": True,
+    },
+    {
+        # Kainji Nigerian Air Force Base (Major General Tunde Idiagbon
+        # AFB), Niger State, Nigeria. Pas de code ICAO publié — c'est une
+        # base militaire. Coords approximatives au sud du lac Kainji.
+        "icao": "KAINJI",
+        "name": "Kainji NAFB",
+        "country_iso": "NG",
+        "lat": 9.806,
+        "lon": 4.521,
+        "is_military": True,
+    },
+]
+
+
+def seed_user_airports() -> None:
+    for ap in USER_AIRPORTS:
+        db.save_user_airport(
+            icao=ap["icao"], name=ap["name"], country_iso=ap["country_iso"],
+            lat=ap["lat"], lon=ap["lon"], is_military=ap.get("is_military", True),
+        )
+    print(f"Seeded {len(USER_AIRPORTS)} user-added airports : "
+          + ", ".join(ap["icao"] for ap in USER_AIRPORTS))
+
+
 def seed_aircraft_type_perf() -> None:
     n = db.upsert_aircraft_types(AIRCRAFT_TYPE_PERF)
     print(f"Seeded perf data for {n} aircraft types.")
@@ -220,6 +262,7 @@ def main() -> int:
     seed_pilots.main()
     seed_aircraft_type_perf()
     seed_aircraft()
+    seed_user_airports()
     seed_pocs()
     seed_extra_waypoints()
     seed_route_templates()

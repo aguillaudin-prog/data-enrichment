@@ -83,16 +83,16 @@ _MONTHS_EN = {
 
 
 def _format_airport(icao: str) -> str:
-    """Render an airport as 'CITY COUNTRY ICAO' — matches the reference DIC
-    column 23/24/25 format (e.g. 'COTONOU BENIN DBBB').
+    """Render an airport for the DIC airport-list cells.
 
-    City source priority:
-      1. `municipality` column (OurAirports field) — most reliable
-      2. First word of the airport `name` — fallback when municipality is
-         missing. Brittle for multi-word cities or names that start with
-         operator/honorific (Murtala, Nnamdi…).
+    Standard ICAO airports → 'CITY COUNTRY ICAO' (e.g. 'COTONOU BENIN DBBB').
+    User-added operational labels (FOB, military AFB without a published
+    ICAO) → '<NAME> <COUNTRY>' — no ICAO repeated since the 'ICAO' field
+    IS the operational name. Matches the reference DIC convention where
+    these get a textual identifier without an ICAO-style suffix:
+      `(24) Departure airport | TOUROU / KAINJI NAFB NIGERIA`
 
-    Returns the bare ICAO if any lookup fails so we never lose the
+    Returns the bare label if any lookup fails so we never lose the
     identifier in the rendered DIC.
     """
     icao = (icao or "").strip().upper()
@@ -101,16 +101,29 @@ def _format_airport(icao: str) -> str:
     ap = db.find_airport(icao)
     if not ap:
         return icao
+    is_user_added = False
+    try:
+        is_user_added = bool(ap["user_added"])
+    except (KeyError, IndexError):
+        is_user_added = False
+    country = db.find_country_name(ap["country_iso"]) if ap["country_iso"] else None
+    country_upper = (country or "").upper()
+    name = (ap["name"] or "").strip()
+    if is_user_added:
+        # Use the stored name (which may be longer than the ICAO key) +
+        # country. No ICAO suffix — the 'icao' is the operational label.
+        label = name.upper() if name and name.upper() != icao else icao
+        parts = [p for p in (label, country_upper) if p]
+        return " ".join(parts)
+    # Standard ICAO airport: CITY COUNTRY ICAO
     municipality = ""
     try:
         municipality = (ap["municipality"] or "").strip()
     except (KeyError, IndexError):
         municipality = ""
     if not municipality:
-        name = (ap["name"] or "").strip()
         municipality = name.split()[0] if name else ""
-    country = db.find_country_name(ap["country_iso"]) if ap["country_iso"] else None
-    parts = [p for p in (municipality.upper(), (country or "").upper(), icao) if p]
+    parts = [p for p in (municipality.upper(), country_upper, icao) if p]
     return " ".join(parts)
 
 
