@@ -9,7 +9,8 @@
         "destination": "DIAP",
         "route_text": "TYE EBUSO ENKIT ARABA",
         "fl": null,
-        "tas": null
+        "tas": null,
+        "alternate": "DIYO"
       },
       {
         "order": 2,
@@ -17,7 +18,8 @@
         "destination": "DIBK",
         "route_text": "G851 BKY",
         "fl": null,
-        "tas": null
+        "tas": null,
+        "alternate": "DIYO"
       },
       {
         "order": 3,
@@ -25,7 +27,8 @@
         "destination": "DIAP",
         "route_text": "BKY UG851",
         "fl": null,
-        "tas": null
+        "tas": null,
+        "alternate": "DIYO"
       },
       {
         "order": 4,
@@ -33,7 +36,8 @@
         "destination": "DIKO",
         "route_text": "G851 BKY G851 BONTO KRG",
         "fl": null,
-        "tas": null
+        "tas": null,
+        "alternate": "DIBK"
       },
       {
         "order": 5,
@@ -41,7 +45,8 @@
         "destination": "DIAP",
         "route_text": "KRG BONTO G851 BKY G851",
         "fl": null,
-        "tas": null
+        "tas": null,
+        "alternate": "DIBK"
       },
       {
         "order": 6,
@@ -49,7 +54,50 @@
         "destination": "DBBB",
         "route_text": "ARABA ENKIT EBUSO TYE",
         "fl": null,
-        "tas": null
+        "tas": null,
+        "alternate": "DXXX"
+      }
+    ]
+  },
+  {
+    "name": "BÉNIN / DBBB → DIAP → GUCY → DIAP → DBBB",
+    "category": "Bénin",
+    "legs": [
+      {
+        "order": 1,
+        "origin": "DBBB",
+        "destination": "DIAP",
+        "route_text": "TYE EBUSO ENKIT ARABA",
+        "fl": null,
+        "tas": null,
+        "alternate": "DIYO"
+      },
+      {
+        "order": 2,
+        "origin": "DIAP",
+        "destination": "GUCY",
+        "route_text": "V207 AMPAS V207 LGI BIREL",
+        "fl": null,
+        "tas": null,
+        "alternate": "GFLL"
+      },
+      {
+        "order": 3,
+        "origin": "GUCY",
+        "destination": "DIAP",
+        "route_text": "BIREL LGI V207 AMPAS V207",
+        "fl": null,
+        "tas": null,
+        "alternate": "DIYO"
+      },
+      {
+        "order": 4,
+        "origin": "DIAP",
+        "destination": "DBBB",
+        "route_text": "ARABA ENKIT EBUSO TYE",
+        "fl": null,
+        "tas": null,
+        "alternate": "DXXX"
       }
     ]
   },
@@ -63,7 +111,8 @@
         "destination": "DNMN",
         "route_text": "TYE POLTO LAG L433 IBA R778 TEGDA MNA",
         "fl": 90,
-        "tas": 140
+        "tas": 140,
+        "alternate": "DNAA"
       },
       {
         "order": 2,
@@ -71,7 +120,8 @@
         "destination": "DBBB",
         "route_text": "MNA MAGIA V377 LAG POLTO TYE",
         "fl": 100,
-        "tas": 140
+        "tas": 140,
+        "alternate": "DXXX"
       }
     ]
   },
@@ -85,7 +135,8 @@
         "destination": "K AINJI NAFB",
         "route_text": "TOUROU 9°34'45.56\" 3°14'7.09\" 9°34'45.56\" 3°14'7.09\" AINJI",
         "fl": 90,
-        "tas": 140
+        "tas": 140,
+        "alternate": "DNIL"
       },
       {
         "order": 2,
@@ -93,7 +144,8 @@
         "destination": "TOUROU",
         "route_text": "NJI 9°34'45.56\" 3°14'7.09\" 9°34'45.56\" 3°14'7.09\" TOUROU",
         "fl": 100,
-        "tas": 140
+        "tas": 140,
+        "alternate": "DBBB"
       }
     ]
   },
@@ -107,7 +159,8 @@
         "destination": "DNAA",
         "route_text": "TYE POLTO LAG R778 KELI W951 MESES ABC",
         "fl": 90,
-        "tas": 140
+        "tas": 140,
+        "alternate": "DNMM"
       },
       {
         "order": 2,
@@ -115,7 +168,8 @@
         "destination": "DBBB",
         "route_text": "ABC VONUK H340 LAG POLTO TYE",
         "fl": 100,
-        "tas": 140
+        "tas": 140,
+        "alternate": "DXXX"
       }
     ]
   },
@@ -129,7 +183,8 @@
         "destination": "DNIL",
         "route_text": "TYE POLTO LAG L433 IBA ILR",
         "fl": 90,
-        "tas": 140
+        "tas": 140,
+        "alternate": "DNAA"
       },
       {
         "order": 2,
@@ -137,7 +192,8 @@
         "destination": "DBBB",
         "route_text": "ILR USGUN V377 LAG POLTO TYE",
         "fl": 100,
-        "tas": 140
+        "tas": 140,
+        "alternate": "DXXX"
       }
     ]
   }
