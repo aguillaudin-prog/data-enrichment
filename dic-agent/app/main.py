@@ -19,7 +19,11 @@ import streamlit as st
 
 from app import db, docx_generator, fpl_exporter, route_engine, route_suggester
 
-st.set_page_config(page_title="DIC Agent", layout="wide")
+st.set_page_config(
+    page_title="DIC Agent",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 
 def _enforce_auth() -> None:
@@ -212,9 +216,14 @@ def _crew_picker(key_prefix: str, operator: str | None = None) -> dict:
             new_role = st.selectbox("Rôle", ["CDB", "FO"], key=f"{key_prefix}_new_pilot_role")
         with ac3:
             new_rank = st.text_input("Grade", value="CPT", key=f"{key_prefix}_new_pilot_rank")
+        if operator:
+            st.caption(f"Le pilote sera associé à la compagnie **{operator}** "
+                       f"(visible uniquement quand elle est sélectionnée).")
+        else:
+            st.caption("⚠ Sélectionne d'abord une compagnie pour associer le pilote.")
         if new_name and st.button("💾 Ajouter", key=f"{key_prefix}_save_pilot"):
-            db.save_pilot(new_name, new_role, new_rank or None)
-            st.success(f"Pilote {new_name} ({new_role}) ajouté.")
+            db.save_pilot(new_name, new_role, new_rank or None, allowed_operator=operator)
+            st.success(f"Pilote {new_name} ({new_role}) ajouté pour {operator or '(aucun opérateur)'}.")
             st.rerun()
 
     return {
@@ -624,7 +633,24 @@ with st.sidebar:
     )
 
 page_idx = st.session_state.page_idx
-st.markdown(f"### Étape {PAGES[page_idx][0]} {PAGES[page_idx][1]}")
+
+# Top horizontal nav — visible on mobile too (sidebar is collapsed on small
+# screens by default). Three big buttons, current step highlighted in primary.
+_top_cols = st.columns(len(PAGES))
+for i, (num, title, _sub) in enumerate(PAGES):
+    with _top_cols[i]:
+        is_current = (page_idx == i)
+        clicked = st.button(
+            f"{num} {title}",
+            key=f"topnav_{i}",
+            use_container_width=True,
+            type="primary" if is_current else "secondary",
+        )
+        if clicked:
+            _goto_page(i)
+            st.rerun()
+
+st.markdown(f"### {PAGES[page_idx][0]} {PAGES[page_idx][1]}")
 st.caption(PAGES[page_idx][2])
 st.divider()
 
