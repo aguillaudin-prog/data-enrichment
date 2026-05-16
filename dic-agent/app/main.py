@@ -628,6 +628,143 @@ def _render_briefing_section(*, legs: list[dict]) -> None:
     _render_gramet_section(legs=legs, ar_cfg=ar_cfg)
 
 
+def _render_pre_dic_checklist(mission: dict, legs: list[dict]) -> bool:
+    """Validation systématique avant export. Retourne True si OK pour générer
+    (pas de check rouge), False sinon. Affiche un panneau couleurs.
+
+    Rouge = bloquant (DIC sera rejetée ou incohérente).
+    Orange = warning (acceptable mais à vérifier).
+    Vert = tout passe.
+
+    Le bouton 'Générer DIC' est désactivé tant qu'il reste du rouge.
+    """
+    import datetime as _dt
+    reds: list[str] = []
+    oranges: list[str] = []
+    greens: list[str] = []
+
+    # ─── Mission / appareil / équipage ────────────────────────────────────
+    if not (mission.get("registration") or "").strip():
+        reds.append("Immatriculation appareil manquante.")
+    if not (mission.get("aircraft_type_icao") or "").strip():
+        reds.append("Type appareil ICAO manquant.")
+    if not (mission.get("callsign") or "").strip():
+        oranges.append("Callsign manquant — sera repris depuis l'immat.")
+    if not (mission.get("operator") or "").strip():
+        reds.append("Opérateur / compagnie manquante.")
+    if not (mission.get("crew_cdb") or "").strip():
+        reds.append("CDB manquant.")
+    if not (mission.get("crew_fo") or "").strip():
+        oranges.append("FO manquant (vol mono-pilote ?).")
+    if not (mission.get("poc_name") or "").strip():
+        reds.append("POC (point of contact) manquant.")
+    if not (mission.get("poc_phone") or "").strip():
+        reds.append("Téléphone POC manquant.")
+    if not (mission.get("poc_email_functional") or "").strip():
+        oranges.append("Email POC fonctionnel manquant.")
+
+    # ─── Performances appareil ────────────────────────────────────────────
+    ac_type = (mission.get("aircraft_type_icao") or "").strip()
+    ac_perf = db.find_aircraft_type(ac_type) if ac_type else None
+    ceiling_fl = None
+    range_nm = None
+    if ac_perf:
+        try:
+            if ac_perf["service_ceiling_ft"]:
+                ceiling_fl = int(ac_perf["service_ceiling_ft"]) // 100
+        except (KeyError, IndexError, TypeError):
+            pass
+        try:
+            if ac_perf["range_nm"]:
+                range_nm = int(ac_perf["range_nm"])
+        except (KeyError, IndexError, TypeError):
+            pass
+
+    # ─── Legs ─────────────────────────────────────────────────────────────
+    valid_legs = [l for l in legs if l.get("origin") and l.get("destination")]
+    if not valid_legs:
+        reds.append("Aucun leg complet (origine + destination).")
+    now = _dt.datetime.now(_dt.timezone.utc)
+    idx_cache = country_index_cached()
+    for i, leg in enumerate(valid_legs):
+        ltag = f"Leg {i + 1}"
+        eobt = leg.get("eobt")
+        if not isinstance(eobt, _dt.datetime):
+            reds.append(f"{ltag} : EOBT manquant.")
+            continue
+        if eobt < now:
+            reds.append(f"{ltag} : EOBT dans le passé ({eobt:%Y-%m-%d %H:%MZ}).")
+        elif (eobt - now) < _dt.timedelta(hours=24):
+            oranges.append(
+                f"{ltag} : EOBT < 24 h du présent — la plupart des pays "
+                f"exigent 5-14 jours de préavis pour une DIC."
+            )
+        fl = int(leg.get("fl") or 0)
+        if fl <= 0:
+            reds.append(f"{ltag} : FL non saisi.")
+        elif ceiling_fl and fl > ceiling_fl:
+            reds.append(
+                f"{ltag} : FL{fl:03d} > plafond service appareil "
+                f"(FL{ceiling_fl:03d})."
+            )
+        if not (leg.get("route_text") or "").strip():
+            oranges.append(f"{ltag} : route texte vide — DCT par défaut.")
+        if not (leg.get("alternate") or "").strip():
+            oranges.append(f"{ltag} : pas d'alternate saisi.")
+        # Distance vs range
+        if range_nm:
+            ap_o = db.find_airport(leg["origin"])
+            ap_d = db.find_airport(leg["destination"])
+            if ap_o and ap_d:
+                try:
+                    dist = route_engine._great_circle_nm(
+                        (ap_o["lat"], ap_o["lon"]),
+                        (ap_d["lat"], ap_d["lon"]),
+                    )
+                    if dist > range_nm * 0.95:
+                        reds.append(
+                            f"{ltag} : distance {dist:.0f} NM > range "
+                            f"appareil {range_nm} NM (marge < 5 %)."
+                        )
+                    elif dist > range_nm * 0.80:
+                        oranges.append(
+                            f"{ltag} : distance {dist:.0f} NM proche du "
+                            f"range appareil ({range_nm} NM) — vérifier "
+                            f"carburant + alternate."
+                        )
+                except Exception:
+                    pass
+
+    # ─── Cohérence cross-leg ──────────────────────────────────────────────
+    if len(valid_legs) > 1:
+        # Toutes les destinations doivent matcher l'origine du leg suivant
+        for i in range(len(valid_legs) - 1):
+            if valid_legs[i]["destination"].strip().upper() != valid_legs[i + 1]["origin"].strip().upper():
+                oranges.append(
+                    f"Discontinuité entre Leg {i + 1} ({valid_legs[i]['destination']}) "
+                    f"et Leg {i + 2} ({valid_legs[i + 1]['origin']}) — vol ferry ? Vérifie."
+                )
+
+    if not reds and not oranges:
+        greens.append("Tout est cohérent.")
+
+    # ─── Rendu UI ─────────────────────────────────────────────────────────
+    st.markdown("### ✅ Vérification pré-DIC")
+    if reds:
+        st.error(
+            "**Blocages — DIC ne sera pas générée tant que ce n'est pas corrigé :**\n"
+            + "\n".join(f"- {m}" for m in reds)
+        )
+    if oranges:
+        st.warning(
+            "**Warnings — DIC peut être générée mais à vérifier :**\n"
+            + "\n".join(f"- {m}" for m in oranges)
+        )
+    if greens:
+        st.success("✓ " + greens[0])
+    return not reds
+
+
 def _render_gramet_section(*, legs: list[dict], ar_cfg) -> None:
     """GRAMET (coupe verticale météo) par leg. Téléchargeable en PDF.
 
@@ -981,6 +1118,7 @@ PAGES = [
     ("1.", "Mission & profils", "Avion, équipage, compagnie"),
     ("2.", "Legs", "Itinéraire, dates, route"),
     ("3.", "Preview & export", "Génère le .docx DIC"),
+    ("📋", "Historique", "Missions enregistrées, routes en base"),
     ("⚙", "Admin", "Aérodromes hors ICAO, API autorouter, config"),
 ]
 
@@ -1299,7 +1437,7 @@ if page_idx == 1:
         st.session_state.legs[i] = _leg_editor(i, leg)
 
     # Inline +/− leg controls at the bottom — concise, no header noise.
-    lc1, lc2, _ = st.columns([1, 1, 4])
+    lc1, lc2, lc3, _ = st.columns([1, 1, 2, 3])
     with lc1:
         if st.button("➕ Leg", help="Ajouter un leg"):
             st.session_state.legs.append(
@@ -1310,7 +1448,35 @@ if page_idx == 1:
         if len(st.session_state.legs) > 1 and st.button("➖ Leg", help="Retirer le dernier leg"):
             st.session_state.legs.pop()
             st.rerun()
-
+    with lc3:
+        valid = [l for l in st.session_state.legs if l.get("origin") and l.get("destination")]
+        if valid and st.button("💾 Enregistrer la route", help="Sauve cette route en base, accessible depuis la page Historique"):
+            mission = st.session_state.get("mission") or {}
+            operator = (mission.get("operator") or "").strip()
+            origin_iso = _resolve_country_for_airport(valid[0]["origin"])
+            country_name = db.find_country_name(origin_iso) if origin_iso else None
+            folder = country_name.title() if country_name else (
+                OPERATOR_FOLDER.get(operator) or origin_iso or "Divers"
+            )
+            sanitised = [
+                {
+                    "order": i + 1, "origin": l["origin"], "destination": l["destination"],
+                    "route_text": l.get("route_text", ""), "fl": l.get("fl", 90),
+                    "tas": l.get("tas", 140),
+                }
+                for i, l in enumerate(valid)
+            ]
+            parts = [sanitised[0]["origin"]] + [l["destination"] for l in sanitised]
+            tpl_name = f"{folder} / " + " → ".join(dict.fromkeys(parts))
+            with db.connect() as c:
+                c.execute(
+                    "INSERT INTO route_template (name, category, legs_json) "
+                    "VALUES (?, ?, ?) "
+                    "ON CONFLICT(name) DO UPDATE SET "
+                    "  category = excluded.category, legs_json = excluded.legs_json",
+                    (tpl_name, folder, json.dumps(sanitised, ensure_ascii=False)),
+                )
+            st.success(f"💾 Route enregistrée : `{tpl_name}` (dossier *{folder}*).")
 
     _step_nav_footer()
 
@@ -1394,11 +1560,14 @@ if page_idx == 2:
     # set it here so the generator's _format_date_of_flight always wins.
 
     st.divider()
+    can_generate = _render_pre_dic_checklist(mission, st.session_state.legs)
+
+    st.divider()
     st.markdown("### 📑 Documents finaux")
     st.caption("À transmettre aux autorités hôtes (DIC) et au plan de vol (FPL).")
     bc1, bc2 = st.columns(2)
     with bc1:
-        if st.button("📄 Générer DIC .docx", type="primary"):
+        if st.button("📄 Générer DIC .docx", type="primary", disabled=not can_generate):
             if all_warnings:
                 st.warning("Des warnings subsistent — le doc sera généré mais à vérifier.")
             # Aggregate per-leg alternates into the mission-level field expected
@@ -1520,6 +1689,121 @@ if page_idx == 2:
                 mime="text/plain",
             )
 
+    # ─── Pack ZIP : FPL + briefing + résumé (sans la DIC qui reste à part) ─
+    st.divider()
+    st.markdown("### 📦 Pack mission ZIP")
+    st.caption(
+        "Génère un ZIP avec FPL + résumé mission + briefing météo/NOTAM "
+        "(la DIC reste téléchargée séparément). Pratique pour transmettre "
+        "tout d'un coup en pièce jointe."
+    )
+    if st.button("📦 Générer pack ZIP"):
+        import io
+        import zipfile as _zip
+        from app import autorouter_client as _ar
+
+        buf = io.BytesIO()
+        with _zip.ZipFile(buf, "w", _zip.ZIP_DEFLATED) as zf:
+            # FPL par leg
+            fpl_blocks: list[str] = []
+            for i, leg in enumerate(st.session_state.legs):
+                if not leg.get("origin") or not leg.get("destination"):
+                    continue
+                try:
+                    eet_min = int(
+                        route_engine.compute_leg(
+                            eobt=leg["eobt"], origin_icao=leg["origin"],
+                            destination_icao=leg["destination"],
+                            route_text=leg["route_text"],
+                            fl=leg["fl"], tas_kt=leg["tas"], country_index=idx,
+                        ).total_time_min
+                    )
+                except Exception:
+                    eet_min = 60
+                ap_type = (mission.get("aircraft_type_icao") or "").strip()
+                wake = "L"
+                if ap_type:
+                    types = db.list_aircraft_types(ap_type)
+                    if types and types[0]["wake_category"]:
+                        wake = types[0]["wake_category"]
+                fpl_text = fpl_exporter.fpl_for_leg(
+                    callsign=(mission.get("callsign") or "").replace("-", "") or "ZZZZZ",
+                    aircraft_type=ap_type or "ZZZZ",
+                    registration=mission.get("registration") or "",
+                    operator=mission.get("operator") or "",
+                    wake_category=wake,
+                    dep=leg["origin"], dest=leg["destination"],
+                    eobt=leg["eobt"], tas_kt=leg["tas"], fl=leg["fl"],
+                    route_text=leg["route_text"] or "DCT",
+                    eet_min=eet_min,
+                    alternates=[(leg.get("alternate") or "").strip().upper()] if leg.get("alternate") else [],
+                    remarks=mission.get("purpose"),
+                    sts="PROTECTED" if mission.get("vip_flag") else None,
+                )
+                fpl_blocks.append(f"# Leg {i + 1}: {leg['origin']} → {leg['destination']}\n{fpl_text}\n")
+            if fpl_blocks:
+                zf.writestr("FPL.txt", "\n".join(fpl_blocks))
+
+            # Résumé mission lisible
+            summary_lines = [
+                f"Mission DIC — {mission.get('registration', '?')} ({mission.get('aircraft_type_icao', '?')})",
+                f"Opérateur : {mission.get('operator', '?')}",
+                f"Callsign  : {mission.get('callsign', '?')}",
+                f"CDB       : {mission.get('crew_cdb', '?')}",
+                f"FO        : {mission.get('crew_fo', '—')}",
+                f"POC       : {mission.get('poc_name', '?')} · {mission.get('poc_phone', '?')} · {mission.get('poc_email_functional', '?')}",
+                f"Objet     : {mission.get('purpose', '?')}",
+                "",
+                "Legs :",
+            ]
+            for i, leg in enumerate(st.session_state.legs):
+                if not leg.get("origin"):
+                    continue
+                eobt = leg.get("eobt")
+                eobt_s = eobt.strftime("%Y-%m-%d %H:%MZ") if isinstance(eobt, dt.datetime) else "?"
+                summary_lines.append(
+                    f"  {i + 1}. {leg['origin']} → {leg['destination']}  ·  "
+                    f"FL{int(leg.get('fl', 0)):03d} TAS{int(leg.get('tas', 0))}  ·  "
+                    f"EOBT {eobt_s}  ·  ALT {leg.get('alternate', '—')}"
+                )
+                if leg.get("route_text"):
+                    summary_lines.append(f"     route : {leg['route_text']}")
+            zf.writestr("Resume_mission.txt", "\n".join(summary_lines))
+
+            # Briefing météo + NOTAM si en cache
+            ar_cfg = _ar.AutorouterConfig.from_secrets(st.secrets)
+            wx_data = (st.session_state.get("_briefing_data") or {}).get("wx") or {}
+            notams = (st.session_state.get("_briefing_data") or {}).get("notams") or []
+            if wx_data or notams:
+                lines = ["Briefing météo & NOTAMs"]
+                lines.append("=" * 40)
+                for ic, mt in wx_data.items():
+                    lines.append(f"\n--- {ic} ---")
+                    if mt.metar:
+                        lines.append(f"METAR : {mt.metar}")
+                    if mt.taf:
+                        lines.append(f"TAF   : {mt.taf}")
+                if notams:
+                    lines.append("\n\nNOTAMs")
+                    lines.append("=" * 40)
+                    for n in notams:
+                        lines.append("")
+                        lines.append(_ar.format_notam(n))
+                zf.writestr("Briefing.txt", "\n".join(lines))
+            else:
+                zf.writestr(
+                    "Briefing.txt",
+                    "Briefing non chargé — clique '🌤️ Charger' en page Preview puis re-génère le ZIP."
+                )
+
+        buf.seek(0)
+        st.download_button(
+            "⬇️ Télécharger pack ZIP",
+            data=buf.getvalue(),
+            file_name="Pack_" + (mission.get("registration") or "mission").replace("/", "-") + ".zip",
+            mime="application/zip",
+        )
+
     st.divider()
     st.markdown("### 🌤️ Briefing (météo, NOTAM, GRAMET, pack PDF)")
     st.caption(
@@ -1532,6 +1816,50 @@ if page_idx == 2:
 
 
 if page_idx == 3:
+    st.caption(
+        "Toutes les missions / routes enregistrées en base. Clique sur **Charger** "
+        "pour pré-remplir une mission avec les legs sauvegardés."
+    )
+    rows = db.list_route_templates()
+    if not rows:
+        st.info("Aucune route en base. Génère une DIC ou clique 💾 Enregistrer "
+                "depuis la page Legs pour démarrer la bibliothèque.")
+    else:
+        # Group by category (dossier pays). Tri pour mettre les plus récents
+        # en premier dans chaque dossier — l'id auto-incrément joue ce rôle.
+        from collections import defaultdict
+        by_cat: dict[str, list] = defaultdict(list)
+        for r in rows:
+            by_cat[r["category"] or "Divers"].append(r)
+        st.caption(f"**{len(rows)} route(s)** réparties sur **{len(by_cat)} dossier(s)**.")
+        for cat in sorted(by_cat):
+            with st.expander(f"📁 {cat}  ({len(by_cat[cat])} route(s))", expanded=False):
+                for r in sorted(by_cat[cat], key=lambda x: x["id"], reverse=True):
+                    legs_json = json.loads(r["legs_json"])
+                    summary = " → ".join(
+                        dict.fromkeys(
+                            [legs_json[0]["origin"]] + [l["destination"] for l in legs_json]
+                        )
+                    )
+                    c1, c2, c3 = st.columns([5, 1, 1])
+                    with c1:
+                        st.markdown(f"**{r['name']}**")
+                        st.caption(f"`{summary}` · {len(legs_json)} leg(s)")
+                    with c2:
+                        if st.button("📂 Charger", key=f"hist_load_{r['id']}"):
+                            _apply_template(r["name"], rows)
+                            _goto_page(1)
+                            st.rerun()
+                    with c3:
+                        if st.button("🗑️", key=f"hist_del_{r['id']}", help="Supprimer"):
+                            with db.connect() as c:
+                                c.execute("DELETE FROM route_template WHERE id = ?", (r["id"],))
+                            st.rerun()
+
+    _step_nav_footer()
+
+
+if page_idx == 4:
     st.caption(
         "Configuration et données opérationnelles. Ces sections n'impactent pas "
         "la génération du DIC tant que tu n'en as pas besoin."
