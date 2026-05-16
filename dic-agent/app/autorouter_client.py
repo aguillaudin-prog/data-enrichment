@@ -209,6 +209,114 @@ def list_aircraft_templates(cfg: AutorouterConfig) -> list[dict]:
     return []
 
 
+def list_aircraft(cfg: AutorouterConfig) -> list[dict]:
+    """GET /aircraft — la liste des appareils créés par l'utilisateur sur
+    son compte autorouter. Distinct de /aircraft/templates (catalogue
+    manufacturer/model). Les IDs retournés ici sont utilisables comme
+    `aircraftid` dans le payload POST /router."""
+    try:
+        resp = requests.get(
+            f"{cfg.base_url}/aircraft",
+            headers=_auth_headers(cfg), timeout=20,
+        )
+    except requests.exceptions.RequestException as e:
+        raise AutorouterError(f"network: {e}")
+    if resp.status_code != 200:
+        raise AutorouterError(
+            f"GET /aircraft HTTP {resp.status_code}: {resp.text[:300]}"
+        )
+    try:
+        data = resp.json()
+    except ValueError:
+        return []
+    if isinstance(data, list):
+        return [a for a in data if isinstance(a, dict)]
+    if isinstance(data, dict) and "aircraft" in data:
+        return [a for a in data["aircraft"] if isinstance(a, dict)]
+    return []
+
+
+# Cache module-level (vit la durée du process Streamlit) : on POST /aircraft
+# une seule fois par type ICAO, on réutilise l'ID ensuite. Évite de remplir
+# le compte autorouter de doublons.
+_AIRCRAFT_ID_CACHE: dict[str, int] = {}
+
+
+def ensure_aircraft_for_type(
+    cfg: AutorouterConfig,
+    icao_type: str,
+    callsign: str = "",
+) -> int | None:
+    """Garantit qu'un appareil autorouter existe pour le type ICAO donné
+    avec un équipement avionique IFR complet. Retourne son ID utilisable
+    comme `aircraftid` dans /router.
+
+    Workflow :
+      1. Lookup cache module-level → return cached ID si déjà résolu.
+      2. GET /aircraft → si un appareil existant matche le type ICAO,
+         on prend le sien (l'utilisateur peut avoir personnalisé la perf).
+      3. POST /aircraft avec équipement IFR forcé (SDFGRY) + transpondeur
+         Mode S + perf de notre table aircraft_type ou fallback table.
+
+    Retourne None si la création échoue (réseau, auth, schema), le caller
+    fall-back alors sur aircraftid=0 (built-in P28R) — moins bon que le
+    template dédié mais évite le crash.
+    """
+    icao = _canonical_icao_type(icao_type)
+    if not icao:
+        return None
+    if icao in _AIRCRAFT_ID_CACHE:
+        return _AIRCRAFT_ID_CACHE[icao]
+    # 1. Cherche un appareil existant matchant
+    try:
+        existing = list_aircraft(cfg)
+    except AutorouterError:
+        existing = []
+    for ac in existing:
+        ac_type = (ac.get("icaotypename") or ac.get("icaotype") or "").upper()
+        if ac_type and _canonical_icao_type(ac_type) == icao:
+            try:
+                aid = int(ac.get("id"))
+            except (TypeError, ValueError):
+                continue
+            _AIRCRAFT_ID_CACHE[icao] = aid
+            return aid
+    # 2. Crée l'appareil via POST /aircraft
+    body = _build_inline_aircraft(icao) or {}
+    # callsign requis par l'API — on prend celui de la mission, sinon un
+    # générique basé sur le type ICAO (qui sera de toute façon remplacé
+    # par le vrai callsign au moment de générer le FPL).
+    body["callsign"] = (callsign or f"ZZZ{icao}")[:7]
+    try:
+        resp = requests.post(
+            f"{cfg.base_url}/aircraft",
+            json=body, headers=_auth_headers(cfg), timeout=30,
+        )
+    except requests.exceptions.RequestException:
+        return None
+    if resp.status_code != 200:
+        return None
+    try:
+        data = resp.json()
+    except ValueError:
+        return None
+    # Réponse : soit un entier brut, soit {"id": N}, soit {"aircraftid": N}
+    aid = None
+    if isinstance(data, int):
+        aid = data
+    elif isinstance(data, dict):
+        aid = data.get("id") or data.get("aircraftid")
+    elif isinstance(data, str) and data.strip().isdigit():
+        aid = int(data.strip())
+    try:
+        aid_int = int(aid) if aid is not None else None
+    except (TypeError, ValueError):
+        return None
+    if aid_int is not None:
+        _AIRCRAFT_ID_CACHE[icao] = aid_int
+    return aid_int
+
+
 def find_template_id_for_type(cfg: AutorouterConfig, icao_type: str) -> int | None:
     """Look up the aircraft template ID best matching `icao_type`.
 
@@ -618,6 +726,12 @@ def suggest_route(
     """
     needs_vfr_first = _is_user_added(departure) or _is_user_added(destination)
     tpl_id = find_template_id_for_type(cfg, aircraft_type or "") if aircraft_type else None
+    # Si aucun template/aircraft existant pour ce type, on en crée un via
+    # POST /aircraft avec équipement IFR forcé. Évite le fallback sur
+    # aircraftid=0 (P28R built-in sans équipement IFR) qui produit WARN313
+    # à tous les coups sur les couples civils IFR.
+    if tpl_id is None and aircraft_type and not needs_vfr_first:
+        tpl_id = ensure_aircraft_for_type(cfg, aircraft_type)
 
     try:
         return _suggest_route_once(
