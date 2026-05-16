@@ -290,9 +290,50 @@ def ensure_aircraft_for_type(
             _AIRCRAFT_ID_CACHE[icao] = aid
             _LAST_AIRCRAFT_DIAG = f"found existing {icao} id={aid}"
             return aid
-    # 2. Crée l'appareil via POST /aircraft
+    # 2. Lookup catalogue autorouter pour récupérer les IDs manufacturer +
+    # icaotype requis par POST /aircraft (sans eux : HTTP 500 "missing
+    # manufacturer"). Le catalogue est l'inventaire complet manufacturer /
+    # model / icaotype maintenu par autorouter.
+    try:
+        catalog = list_aircraft_templates(cfg)
+    except AutorouterError as e:
+        _LAST_AIRCRAFT_DIAG = f"GET /aircraft/templates failed: {e}"
+        return None
+    catalog_entry: dict | None = None
+    for t in catalog:
+        for key in ("icao", "icaoid", "type", "icaotype", "designator"):
+            v = (t.get(key) or "").upper().strip() if isinstance(t.get(key), str) else ""
+            if v and v == icao:
+                catalog_entry = t
+                break
+        if catalog_entry:
+            break
+    if not catalog_entry:
+        _LAST_AIRCRAFT_DIAG = f"no catalog entry for {icao} (out of {len(catalog)} types)"
+        return None
+    # IDs côté catalogue. Les noms de clé varient — on essaie en cascade.
+    manufacturer_id = (
+        catalog_entry.get("manufacturerid")
+        or catalog_entry.get("manufacturer_id")
+        or catalog_entry.get("manufacturer")
+    )
+    icao_type_id = (
+        catalog_entry.get("id")
+        or catalog_entry.get("icaotypeid")
+        or catalog_entry.get("icao_type_id")
+    )
+    model_name = (
+        catalog_entry.get("model")
+        or catalog_entry.get("modelname")
+        or icao
+    )
+    # 3. Crée l'appareil via POST /aircraft avec tous les champs requis
     body = _build_inline_aircraft(icao) or {}
     body["callsign"] = (callsign or f"ZZZ{icao}")[:7]
+    body["manufacturer"] = manufacturer_id
+    body["icaotype"] = icao_type_id
+    body["modelname"] = model_name
+    body["year"] = 2020  # arbitraire mais requis pour les définitions persistantes
     try:
         resp = requests.post(
             f"{cfg.base_url}/aircraft",
@@ -303,7 +344,8 @@ def ensure_aircraft_for_type(
         return None
     if resp.status_code != 200:
         _LAST_AIRCRAFT_DIAG = (
-            f"POST /aircraft HTTP {resp.status_code}: {resp.text[:200]}"
+            f"POST /aircraft HTTP {resp.status_code}: {resp.text[:200]} "
+            f"(body keys: {sorted(body.keys())})"
         )
         return None
     try:
