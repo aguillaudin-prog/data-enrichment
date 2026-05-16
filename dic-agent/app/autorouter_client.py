@@ -440,13 +440,20 @@ def _suggest_route_once(
                                 "siderror", "starerror", "validatorerror",
                             ) if msg.get(k)]
                             log_blob = " ".join(logs).upper()
-                            # Only call it "non-IFR" when we actually asked for
-                            # vfrdowngrade (i.e. user-added FOB on one end).
-                            # On standard IFR airports, internalerror usually
-                            # means the default aircraft profile can't make it
-                            # or the FL/route constraints don't match airways.
+                            # On signale "non-IFR" UNIQUEMENT quand un des
+                            # aéroports est réellement user-added (FOB).
+                            # Avant on se basait sur le flag needs_vfr du
+                            # 2e essai (toujours True), ce qui produisait le
+                            # message à tort sur des routes 100 % civiles
+                            # type LFRV → LFMV qui échouent pour d'autres
+                            # raisons (perf appareil de référence, airways
+                            # incompatibles à ce FL, etc.).
+                            actually_fob = (
+                                _is_user_added(departure)
+                                or _is_user_added(destination)
+                            )
                             non_ifr = (
-                                needs_vfr
+                                actually_fob
                                 and "internalerror" in err_flags
                                 and "ENTIRELY IFR/GAT" in log_blob
                             )
@@ -457,20 +464,15 @@ def _suggest_route_once(
                                     "(TOUROU, KAINJI, FOB). "
                                     "Utilise la suggestion locale (✨)."
                                 )
-                            # Generic but actionable: surface what we know.
-                            tail = logs[-3:] if logs else []
-                            extras = ""
-                            if "internalerror" in err_flags and not tail:
-                                extras = (
-                                    " — Souvent : appareil de référence "
-                                    "(P28R par défaut) trop limité pour la distance/FL, "
-                                    "ou pas d'airways compatibles à ce FL. "
-                                    "Essaie un FL différent ou la suggestion locale."
-                                )
+                            # Message neutre quand autorouter ne trouve juste
+                            # pas de route — pas un bug, c'est une limite de
+                            # leur couverture airways pour ce couple ou pour
+                            # le profil appareil par défaut.
                             raise AutorouterError(
-                                f"Autorouter n'a pas trouvé de route valide "
-                                f"(flags: {err_flags or 'none'}).{extras} "
-                                + (f"Logs: {tail}" if tail else "")
+                                "Autorouter n'a pas trouvé de route pour ce "
+                                "couple. Sa base airways/perf ne couvre pas "
+                                "tous les cas — la suggestion locale (✨) "
+                                "fonctionne sur cette route."
                             )
                         # routesuccess=true but no `solution` command yet:
                         # wait one more poll cycle.
