@@ -240,6 +240,10 @@ def list_aircraft(cfg: AutorouterConfig) -> list[dict]:
 # une seule fois par type ICAO, on réutilise l'ID ensuite. Évite de remplir
 # le compte autorouter de doublons.
 _AIRCRAFT_ID_CACHE: dict[str, int] = {}
+# Diagnostic de la dernière action ensure_aircraft_for_type — surfaceé dans
+# les messages d'erreur /router pour qu'on sache exactement ce qui a été
+# fait avec l'aircraft setup (créé / réutilisé / échec API).
+_LAST_AIRCRAFT_DIAG: str = ""
 
 
 def ensure_aircraft_for_type(
@@ -262,16 +266,20 @@ def ensure_aircraft_for_type(
     fall-back alors sur aircraftid=0 (built-in P28R) — moins bon que le
     template dédié mais évite le crash.
     """
+    global _LAST_AIRCRAFT_DIAG
     icao = _canonical_icao_type(icao_type)
     if not icao:
+        _LAST_AIRCRAFT_DIAG = "skip (no ICAO type)"
         return None
     if icao in _AIRCRAFT_ID_CACHE:
+        _LAST_AIRCRAFT_DIAG = f"cached {icao} id={_AIRCRAFT_ID_CACHE[icao]}"
         return _AIRCRAFT_ID_CACHE[icao]
     # 1. Cherche un appareil existant matchant
     try:
         existing = list_aircraft(cfg)
-    except AutorouterError:
+    except AutorouterError as e:
         existing = []
+        _LAST_AIRCRAFT_DIAG = f"GET /aircraft failed: {e}"
     for ac in existing:
         ac_type = (ac.get("icaotypename") or ac.get("icaotype") or "").upper()
         if ac_type and _canonical_icao_type(ac_type) == icao:
@@ -280,27 +288,29 @@ def ensure_aircraft_for_type(
             except (TypeError, ValueError):
                 continue
             _AIRCRAFT_ID_CACHE[icao] = aid
+            _LAST_AIRCRAFT_DIAG = f"found existing {icao} id={aid}"
             return aid
     # 2. Crée l'appareil via POST /aircraft
     body = _build_inline_aircraft(icao) or {}
-    # callsign requis par l'API — on prend celui de la mission, sinon un
-    # générique basé sur le type ICAO (qui sera de toute façon remplacé
-    # par le vrai callsign au moment de générer le FPL).
     body["callsign"] = (callsign or f"ZZZ{icao}")[:7]
     try:
         resp = requests.post(
             f"{cfg.base_url}/aircraft",
             json=body, headers=_auth_headers(cfg), timeout=30,
         )
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as e:
+        _LAST_AIRCRAFT_DIAG = f"POST /aircraft network: {e}"
         return None
     if resp.status_code != 200:
+        _LAST_AIRCRAFT_DIAG = (
+            f"POST /aircraft HTTP {resp.status_code}: {resp.text[:200]}"
+        )
         return None
     try:
         data = resp.json()
     except ValueError:
+        _LAST_AIRCRAFT_DIAG = f"POST /aircraft non-JSON: {resp.text[:200]}"
         return None
-    # Réponse : soit un entier brut, soit {"id": N}, soit {"aircraftid": N}
     aid = None
     if isinstance(data, int):
         aid = data
@@ -311,9 +321,11 @@ def ensure_aircraft_for_type(
     try:
         aid_int = int(aid) if aid is not None else None
     except (TypeError, ValueError):
+        _LAST_AIRCRAFT_DIAG = f"POST /aircraft unexpected body: {data!r}"
         return None
     if aid_int is not None:
         _AIRCRAFT_ID_CACHE[icao] = aid_int
+        _LAST_AIRCRAFT_DIAG = f"created {icao} id={aid_int}"
     return aid_int
 
 
@@ -664,14 +676,21 @@ def _suggest_route_once(
                                     "Utilise la suggestion locale (✨)."
                                 )
                             # Message neutre quand autorouter ne trouve juste
-                            # pas de route — pas un bug, c'est une limite de
-                            # leur couverture airways pour ce couple ou pour
-                            # le profil appareil par défaut.
+                            # pas de route. On joint flags + 3 dernières
+                            # lignes de log pour diagnostiquer (sinon on
+                            # navigue à l'aveugle sur les vraies causes).
+                            flags_str = ", ".join(err_flags) or "—"
+                            tail = " | ".join(logs[-3:]) if logs else "—"
+                            ac_diag = (
+                                f"aircraftid={aircraft_template_id}"
+                                if aircraft_template_id
+                                else "aircraftid=0 (P28R built-in)"
+                            )
+                            setup_diag = _LAST_AIRCRAFT_DIAG or "—"
                             raise AutorouterError(
-                                "Autorouter n'a pas trouvé de route pour ce "
-                                "couple. Sa base airways/perf ne couvre pas "
-                                "tous les cas — la suggestion locale (✨) "
-                                "fonctionne sur cette route."
+                                f"Autorouter n'a pas trouvé de route. "
+                                f"{ac_diag}. Setup : {setup_diag}. "
+                                f"Flags : {flags_str}. Logs : {tail}"
                             )
                         # routesuccess=true but no `solution` command yet:
                         # wait one more poll cycle.
