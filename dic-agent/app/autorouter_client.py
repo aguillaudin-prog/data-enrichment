@@ -359,6 +359,10 @@ def ensure_aircraft_for_type(
     body["callsign"] = (callsign or f"ZZZ{icao}")[:7]
     body["manufacturer"] = manufacturer_id
     body["icaotype"] = icao_type_id
+    # Le wiki dit "modelname" mais l'API rejette avec "missing model" si on
+    # n'envoie que modelname. On envoie les deux pour couvrir les deux
+    # nommages observés en pratique.
+    body["model"] = model_name
     body["modelname"] = model_name
     body["year"] = 2020  # arbitraire mais requis pour les définitions persistantes
     try:
