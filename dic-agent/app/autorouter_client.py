@@ -513,20 +513,35 @@ def suggest_route(
     poll_interval_s: float = 1.5,
     per_request_timeout_s: int = 90,
 ) -> AutorouterRoute:
-    """Stratégie en 2 essais pour maximiser le succès :
+    """Stratégie en 3 essais pour maximiser le succès :
 
-    1. **Strict** : template appareil matchant le type ICAO, fenêtre FL ±60,
-       vfrdowngrade off sauf FOB user-added. Donne la meilleure route IFR.
-    2. **Relâché** (si le strict échoue avec internalerror) : aircraftid=0
-       (P28R), fenêtre FL ±150, vfrdowngrade=True. Catch-all qui produit
-       presque toujours quelque chose, quitte à accepter du VFR.
+    1. **Strict** : template appareil matchant le type ICAO, fenêtre FL ±60
+       autour de la cruise demandée, vfrdowngrade off sauf FOB user-added.
+       Donne la meilleure route IFR sur les liaisons standard.
+    2. **Relâché** : aircraftid=0 (P28R), fenêtre FL ±150, vfrdowngrade=True.
+       Couvre les cas où le template appareil est trop contraint ou le FL
+       demandé incompatible avec les airways.
+    3. **Sans contrainte** : aucune fenêtre FL — autorouter choisit librement
+       le niveau de croisière dans l'enveloppe de son appareil par défaut.
+       Last-ditch effort pour les couples où les airways exigent un FL
+       précis hors plage par défaut.
 
-    Le 2e essai n'est lancé que si le 1er échoue avec un signal exploitable
-    — pas sur les erreurs réseau, OAuth ou timeout (ces conditions
-    persistent).
+    Le retry n'est lancé que sur des échecs "pas de route" — pas sur les
+    erreurs réseau, OAuth ou timeout.
     """
     needs_vfr_first = _is_user_added(departure) or _is_user_added(destination)
     tpl_id = find_template_id_for_type(cfg, aircraft_type or "") if aircraft_type else None
+
+    def _retryable(err: AutorouterError) -> bool:
+        msg = str(err).lower()
+        return (
+            "internalerror" in msg
+            or "n'a pas trouvé" in msg
+            or "non-ifr" in msg
+            or "enrouteerror" in msg
+            or "iterationerror" in msg
+            or "validatorerror" in msg
+        )
 
     try:
         return _suggest_route_once(
@@ -538,25 +553,29 @@ def suggest_route(
             poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
             per_request_timeout_s=per_request_timeout_s,
         )
-    except AutorouterError as e:
-        msg = str(e).lower()
-        # Retry uniquement sur les échecs "pas de route" qui peuvent céder
-        # à des contraintes plus larges.
-        retryable = (
-            "internalerror" in msg
-            or "n'a pas trouvé" in msg
-            or "non-ifr" in msg
-            or "enrouteerror" in msg
-            or "iterationerror" in msg
-        )
-        if not retryable:
+    except AutorouterError as e1:
+        if not _retryable(e1):
             raise
+    try:
         # 2e essai : large fenêtre + appareil par défaut + VFR autorisé.
         return _suggest_route_once(
             cfg, departure, destination,
             aircraft_type=aircraft_type, cruise_level=cruise_level,
             eobt_iso=eobt_iso, alternate1=alternate1, alternate2=alternate2,
             aircraft_template_id=None, fl_window=150,
+            allow_vfr_downgrade=True,
+            poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
+            per_request_timeout_s=per_request_timeout_s,
+        )
+    except AutorouterError as e2:
+        if not _retryable(e2):
+            raise
+        # 3e essai : on lâche la cruise_level — autorouter choisit librement.
+        return _suggest_route_once(
+            cfg, departure, destination,
+            aircraft_type=aircraft_type, cruise_level=None,
+            eobt_iso=eobt_iso, alternate1=alternate1, alternate2=alternate2,
+            aircraft_template_id=None, fl_window=0,
             allow_vfr_downgrade=True,
             poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
             per_request_timeout_s=per_request_timeout_s,
