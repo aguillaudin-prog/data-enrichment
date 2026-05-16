@@ -467,12 +467,13 @@ def _suggest_route_once(
                             # Message neutre quand autorouter ne trouve juste
                             # pas de route — pas un bug, c'est une limite de
                             # leur couverture airways pour ce couple ou pour
-                            # le profil appareil par défaut.
+                            # le profil appareil par défaut. On joint flags +
+                            # 3 dernières lignes de log pour diagnostiquer.
+                            flags_str = ", ".join(err_flags) or "—"
+                            tail = " | ".join(logs[-3:]) if logs else "—"
                             raise AutorouterError(
-                                "Autorouter n'a pas trouvé de route pour ce "
-                                "couple. Sa base airways/perf ne couvre pas "
-                                "tous les cas — la suggestion locale (✨) "
-                                "fonctionne sur cette route."
+                                f"Autorouter n'a pas trouvé de route. "
+                                f"Flags : {flags_str}. Logs : {tail}"
                             )
                         # routesuccess=true but no `solution` command yet:
                         # wait one more poll cycle.
@@ -556,6 +557,7 @@ def suggest_route(
     except AutorouterError as e1:
         if not _retryable(e1):
             raise
+        err1 = str(e1)
     try:
         # 2e essai : large fenêtre + appareil par défaut + VFR autorisé.
         return _suggest_route_once(
@@ -570,6 +572,8 @@ def suggest_route(
     except AutorouterError as e2:
         if not _retryable(e2):
             raise
+        err2 = str(e2)
+    try:
         # 3e essai : on lâche la cruise_level — autorouter choisit librement.
         return _suggest_route_once(
             cfg, departure, destination,
@@ -579,6 +583,18 @@ def suggest_route(
             allow_vfr_downgrade=True,
             poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
             per_request_timeout_s=per_request_timeout_s,
+        )
+    except AutorouterError as e3:
+        # 3 essais échoués : on agrège les 3 messages pour que l'utilisateur
+        # voie laquelle (template / fenêtre FL / sans contrainte) a planté
+        # et avec quels flags. C'est la seule façon de diagnostiquer un
+        # couple qui résiste à tout retry — sinon on perd l'info des
+        # 2 premiers passages.
+        raise AutorouterError(
+            f"3 essais autorouter échoués. "
+            f"[1 strict] {err1} || "
+            f"[2 large FL] {err2} || "
+            f"[3 free FL] {e3}"
         )
 
 
