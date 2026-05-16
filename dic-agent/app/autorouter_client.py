@@ -479,6 +479,25 @@ def _suggest_route_once(
                                     "(TOUROU, KAINJI, FOB). "
                                     "Utilise la suggestion locale (✨)."
                                 )
+                            # WARN313 sur un couple 100 % IFR (les 2 aéros
+                            # sont publiés) = template appareil mal configuré.
+                            # Eurocontrol ne reconnaît pas l'avion comme
+                            # IFR/GAT — soit pas de template du tout (fallback
+                            # P28R sans équipement IFR), soit le template
+                            # existant n'a pas les codes équipement (SDFGRY)
+                            # cochés. Aucun retry ne corrigera ça — c'est
+                            # une config côté autorouter.
+                            if "WARN313" in log_blob:
+                                raise AutorouterError(
+                                    "Eurocontrol rejette ton FPL : vol non "
+                                    "reconnu comme IFR complet (WARN313). "
+                                    "Cause : le template appareil utilisé "
+                                    "n'a pas l'équipement avionique IFR. "
+                                    "Va sur autorouter.aero/aircraft, édite "
+                                    "le template de ton appareil, et coche "
+                                    "au minimum équipement `SDFGRY` + "
+                                    "transpondeur `S` (mode S)."
+                                )
                             # Message neutre quand autorouter ne trouve juste
                             # pas de route — pas un bug, c'est une limite de
                             # leur couverture airways pour ce couple ou pour
@@ -547,11 +566,11 @@ def suggest_route(
     """
     needs_vfr_first = _is_user_added(departure) or _is_user_added(destination)
     tpl_id = find_template_id_for_type(cfg, aircraft_type or "") if aircraft_type else None
-    # Détection "zéro template" : sans aucun appareil configuré dans le
-    # compte autorouter, le fallback aircraftid=0 (P28R) est traité comme
-    # VFR par défaut. IFPS rejette alors avec WARN313 sur tous les couples
-    # IFR. Fail-fast avec un message actionnable plutôt que 3 retries
-    # condamnés (~90 s de spinner pour rien).
+    # Pas de template matchant pour cet appareil sur un couple 100 % IFR :
+    # le fallback aircraftid=0 (P28R) est traité comme VFR par défaut côté
+    # IFPS → WARN313 systématique → 3 retries condamnés. Fail-fast avec un
+    # message actionnable, avec diagnostic différencié selon qu'il y ait
+    # zéro ou quelques templates dans le compte.
     if tpl_id is None and not needs_vfr_first:
         try:
             all_templates = list_aircraft_templates(cfg)
@@ -559,13 +578,25 @@ def suggest_route(
             all_templates = []  # ne bloque pas si l'inventaire échoue
         if not all_templates:
             raise AutorouterError(
-                "Ton compte autorouter n'a aucun template appareil. "
-                "Sans template, autorouter utilise un P28R sans équipement "
-                "IFR — Eurocontrol rejette la route (WARN313). "
-                "Crée au moins un template sur "
-                "https://www.autorouter.aero/aircraft pour ton appareil "
-                f"({aircraft_type or 'aucun type ICAO renseigné'})."
+                "Ton compte autorouter n'a aucun template appareil. Sans "
+                "template, autorouter utilise un P28R sans équipement IFR — "
+                "Eurocontrol rejette la route (WARN313). Crée au moins un "
+                "template sur https://www.autorouter.aero/aircraft pour "
+                f"ton appareil ({aircraft_type or 'aucun type ICAO renseigné'})."
             )
+        # Templates existent mais aucun ne matche : c'est aussi un échec
+        # garanti. On liste les types disponibles pour aider l'user à
+        # identifier si c'est juste un mismatch de nom (DA62 vs DA-62).
+        avail = ", ".join(
+            sorted({(t.get("icao") or t.get("type") or "?") for t in all_templates})
+        )
+        raise AutorouterError(
+            f"Aucun template autorouter ne matche `{aircraft_type or '?'}`. "
+            f"Templates dispos dans ton compte : {avail or '—'}. "
+            f"Ajoute un template pour `{aircraft_type}` sur "
+            f"https://www.autorouter.aero/aircraft (équipement `SDFGRY` "
+            f"+ transpondeur `S` pour le routage IFR)."
+        )
 
     def _retryable(err: AutorouterError) -> bool:
         msg = str(err).lower()
