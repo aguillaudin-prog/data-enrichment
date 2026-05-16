@@ -247,15 +247,20 @@ def find_template_id_for_type(cfg: AutorouterConfig, icao_type: str) -> int | No
     /router payloads since these 67 templates are public + validated by
     autorouter. None if no match so caller falls back to aircraftid=0.
     """
+    global _LAST_TEMPLATE_LOOKUP
+    _LAST_TEMPLATE_LOOKUP = f"input={icao_type!r}"
     if not icao_type:
         return None
     canonical = _canonical_icao_type(icao_type)
+    _LAST_TEMPLATE_LOOKUP += f" canonical={canonical!r}"
     if not canonical:
         return None
     try:
         templates = list_aircraft_templates(cfg)
-    except AutorouterError:
+    except AutorouterError as e:
+        _LAST_TEMPLATE_LOOKUP += f" GET templates FAILED: {e}"
         return None
+    _LAST_TEMPLATE_LOOKUP += f" catalog={len(templates)}"
     if not templates:
         return None
 
@@ -263,8 +268,10 @@ def find_template_id_for_type(cfg: AutorouterConfig, icao_type: str) -> int | No
         return "".join(c for c in (s or "").upper() if c.isalnum())
 
     needle_norm = _norm(canonical)
+    _LAST_TEMPLATE_LOOKUP += f" needle={needle_norm!r}"
     # 1er passage : match exact normalisé. 2ème passage : startswith
     # pour capter les variantes longues (DHC6 ↔ "DHC-6 Twin Otter").
+    candidates_seen: list[str] = []
     for strict in (True, False):
         for t in templates:
             for key in ("icao", "icaoid", "type", "icaotype", "designator",
@@ -275,15 +282,25 @@ def find_template_id_for_type(cfg: AutorouterConfig, icao_type: str) -> int | No
                 v_norm = _norm(v)
                 if not v_norm:
                     continue
+                if strict and len(candidates_seen) < 10:
+                    candidates_seen.append(v_norm)
                 hit = (v_norm == needle_norm) if strict else v_norm.startswith(needle_norm)
                 if hit:
                     tid = t.get("id") or t.get("aircraftid") or t.get("templateid")
                     if tid is not None:
                         try:
-                            return int(tid)
+                            tid_int = int(tid)
+                            _LAST_TEMPLATE_LOOKUP += (
+                                f" MATCH key={key} v={v!r} id={tid_int} strict={strict}"
+                            )
+                            return tid_int
                         except (TypeError, ValueError):
                             continue
+    _LAST_TEMPLATE_LOOKUP += f" NO MATCH (sample candidates: {candidates_seen[:10]})"
     return None
+
+
+_LAST_TEMPLATE_LOOKUP: str = ""
 
 
 # ─── Routes ────────────────────────────────────────────────────────────────────
@@ -623,9 +640,10 @@ def _suggest_route_once(
                                 if aircraft_template_id
                                 else "aircraftid=0 (P28R built-in)"
                             )
+                            tpl_diag = _LAST_TEMPLATE_LOOKUP or "—"
                             raise AutorouterError(
                                 f"Autorouter n'a pas trouvé de route. "
-                                f"{ac_diag}. "
+                                f"{ac_diag}. Template lookup : {tpl_diag}. "
                                 f"Flags : {flags_str}. Logs : {tail}"
                             )
                         # routesuccess=true but no `solution` command yet:
