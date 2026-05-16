@@ -723,12 +723,16 @@ def suggest_route(
         )
         if not retryable:
             raise
-        # 2e essai : large fenêtre + appareil par défaut + VFR autorisé.
+        # 2e essai : large fenêtre FL + VFR autorisé. On GARDE le template
+        # public résolu — le retomber sur aircraftid=0 (P28R built-in sans
+        # équipement IFR) est strictement pire (WARN313 garanti). Le 1er
+        # essai peut échouer pour mille raisons (FL trop serré, alternate
+        # bizarre, etc.) qui ne sont pas liées à l'appareil.
         return _suggest_route_once(
             cfg, departure, destination,
             aircraft_type=aircraft_type, cruise_level=cruise_level,
             eobt_iso=eobt_iso, alternate1=alternate1, alternate2=alternate2,
-            aircraft_template_id=None, fl_window=150,
+            aircraft_template_id=tpl_id, fl_window=150,
             allow_vfr_downgrade=True,
             poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
             per_request_timeout_s=per_request_timeout_s,
