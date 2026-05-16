@@ -26,7 +26,6 @@ import json as _json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
@@ -301,20 +300,6 @@ def _build_route_request(
     if allow_vfr_downgrade:
         payload["vfrdowngrade"] = True
     if eobt_iso:
-        # Auto-bump si l'EOBT est dans le passé ou trop proche du présent :
-        # autorouter prend ~1 min à router puis ~30 s pour la validation
-        # Eurocontrol. Si l'EOBT < now + ~90 min, IFPS crache (R)EFPM51
-        # ("FPL PROCESSED AFTER ESTIMATED TIME OF ARRIVAL") et la route
-        # est rejetée. L'EOBT envoyé à autorouter est uniquement utilisé
-        # pour le routage — le mission EOBT reste celui de l'utilisateur.
-        try:
-            eobt_dt = datetime.fromisoformat(eobt_iso.replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-            min_eobt = now + timedelta(minutes=90)
-            if eobt_dt < min_eobt:
-                eobt_iso = min_eobt.isoformat()
-        except (ValueError, TypeError):
-            pass
         payload["departuretime"] = eobt_iso
     if cruise_level is not None:
         # Fenêtre large pour laisser autorouter choisir un FL routable
@@ -479,35 +464,15 @@ def _suggest_route_once(
                                     "(TOUROU, KAINJI, FOB). "
                                     "Utilise la suggestion locale (✨)."
                                 )
-                            # WARN313 sur un couple 100 % IFR (les 2 aéros
-                            # sont publiés) = template appareil mal configuré.
-                            # Eurocontrol ne reconnaît pas l'avion comme
-                            # IFR/GAT — soit pas de template du tout (fallback
-                            # P28R sans équipement IFR), soit le template
-                            # existant n'a pas les codes équipement (SDFGRY)
-                            # cochés. Aucun retry ne corrigera ça — c'est
-                            # une config côté autorouter.
-                            if "WARN313" in log_blob:
-                                raise AutorouterError(
-                                    "Eurocontrol rejette ton FPL : vol non "
-                                    "reconnu comme IFR complet (WARN313). "
-                                    "Cause : le template appareil utilisé "
-                                    "n'a pas l'équipement avionique IFR. "
-                                    "Va sur autorouter.aero/aircraft, édite "
-                                    "le template de ton appareil, et coche "
-                                    "au minimum équipement `SDFGRY` + "
-                                    "transpondeur `S` (mode S)."
-                                )
                             # Message neutre quand autorouter ne trouve juste
                             # pas de route — pas un bug, c'est une limite de
                             # leur couverture airways pour ce couple ou pour
-                            # le profil appareil par défaut. On joint flags +
-                            # 3 dernières lignes de log pour diagnostiquer.
-                            flags_str = ", ".join(err_flags) or "—"
-                            tail = " | ".join(logs[-3:]) if logs else "—"
+                            # le profil appareil par défaut.
                             raise AutorouterError(
-                                f"Autorouter n'a pas trouvé de route. "
-                                f"Flags : {flags_str}. Logs : {tail}"
+                                "Autorouter n'a pas trouvé de route pour ce "
+                                "couple. Sa base airways/perf ne couvre pas "
+                                "tous les cas — la suggestion locale (✨) "
+                                "fonctionne sur cette route."
                             )
                         # routesuccess=true but no `solution` command yet:
                         # wait one more poll cycle.
@@ -548,66 +513,20 @@ def suggest_route(
     poll_interval_s: float = 1.5,
     per_request_timeout_s: int = 90,
 ) -> AutorouterRoute:
-    """Stratégie en 3 essais pour maximiser le succès :
+    """Stratégie en 2 essais pour maximiser le succès :
 
-    1. **Strict** : template appareil matchant le type ICAO, fenêtre FL ±60
-       autour de la cruise demandée, vfrdowngrade off sauf FOB user-added.
-       Donne la meilleure route IFR sur les liaisons standard.
-    2. **Relâché** : aircraftid=0 (P28R), fenêtre FL ±150, vfrdowngrade=True.
-       Couvre les cas où le template appareil est trop contraint ou le FL
-       demandé incompatible avec les airways.
-    3. **Sans contrainte** : aucune fenêtre FL — autorouter choisit librement
-       le niveau de croisière dans l'enveloppe de son appareil par défaut.
-       Last-ditch effort pour les couples où les airways exigent un FL
-       précis hors plage par défaut.
+    1. **Strict** : template appareil matchant le type ICAO, fenêtre FL ±60,
+       vfrdowngrade off sauf FOB user-added. Donne la meilleure route IFR.
+    2. **Relâché** (si le strict échoue avec internalerror) : aircraftid=0
+       (P28R), fenêtre FL ±150, vfrdowngrade=True. Catch-all qui produit
+       presque toujours quelque chose, quitte à accepter du VFR.
 
-    Le retry n'est lancé que sur des échecs "pas de route" — pas sur les
-    erreurs réseau, OAuth ou timeout.
+    Le 2e essai n'est lancé que si le 1er échoue avec un signal exploitable
+    — pas sur les erreurs réseau, OAuth ou timeout (ces conditions
+    persistent).
     """
     needs_vfr_first = _is_user_added(departure) or _is_user_added(destination)
     tpl_id = find_template_id_for_type(cfg, aircraft_type or "") if aircraft_type else None
-    # Pas de template matchant pour cet appareil sur un couple 100 % IFR :
-    # le fallback aircraftid=0 (P28R) est traité comme VFR par défaut côté
-    # IFPS → WARN313 systématique → 3 retries condamnés. Fail-fast avec un
-    # message actionnable, avec diagnostic différencié selon qu'il y ait
-    # zéro ou quelques templates dans le compte.
-    if tpl_id is None and not needs_vfr_first:
-        try:
-            all_templates = list_aircraft_templates(cfg)
-        except AutorouterError:
-            all_templates = []  # ne bloque pas si l'inventaire échoue
-        if not all_templates:
-            raise AutorouterError(
-                "Ton compte autorouter n'a aucun template appareil. Sans "
-                "template, autorouter utilise un P28R sans équipement IFR — "
-                "Eurocontrol rejette la route (WARN313). Crée au moins un "
-                "template sur https://www.autorouter.aero/aircraft pour "
-                f"ton appareil ({aircraft_type or 'aucun type ICAO renseigné'})."
-            )
-        # Templates existent mais aucun ne matche : c'est aussi un échec
-        # garanti. On liste les types disponibles pour aider l'user à
-        # identifier si c'est juste un mismatch de nom (DA62 vs DA-62).
-        avail = ", ".join(
-            sorted({(t.get("icao") or t.get("type") or "?") for t in all_templates})
-        )
-        raise AutorouterError(
-            f"Aucun template autorouter ne matche `{aircraft_type or '?'}`. "
-            f"Templates dispos dans ton compte : {avail or '—'}. "
-            f"Ajoute un template pour `{aircraft_type}` sur "
-            f"https://www.autorouter.aero/aircraft (équipement `SDFGRY` "
-            f"+ transpondeur `S` pour le routage IFR)."
-        )
-
-    def _retryable(err: AutorouterError) -> bool:
-        msg = str(err).lower()
-        return (
-            "internalerror" in msg
-            or "n'a pas trouvé" in msg
-            or "non-ifr" in msg
-            or "enrouteerror" in msg
-            or "iterationerror" in msg
-            or "validatorerror" in msg
-        )
 
     try:
         return _suggest_route_once(
@@ -619,11 +538,19 @@ def suggest_route(
             poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
             per_request_timeout_s=per_request_timeout_s,
         )
-    except AutorouterError as e1:
-        if not _retryable(e1):
+    except AutorouterError as e:
+        msg = str(e).lower()
+        # Retry uniquement sur les échecs "pas de route" qui peuvent céder
+        # à des contraintes plus larges.
+        retryable = (
+            "internalerror" in msg
+            or "n'a pas trouvé" in msg
+            or "non-ifr" in msg
+            or "enrouteerror" in msg
+            or "iterationerror" in msg
+        )
+        if not retryable:
             raise
-        err1 = str(e1)
-    try:
         # 2e essai : large fenêtre + appareil par défaut + VFR autorisé.
         return _suggest_route_once(
             cfg, departure, destination,
@@ -633,33 +560,6 @@ def suggest_route(
             allow_vfr_downgrade=True,
             poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
             per_request_timeout_s=per_request_timeout_s,
-        )
-    except AutorouterError as e2:
-        if not _retryable(e2):
-            raise
-        err2 = str(e2)
-    try:
-        # 3e essai : on lâche la cruise_level — autorouter choisit librement.
-        return _suggest_route_once(
-            cfg, departure, destination,
-            aircraft_type=aircraft_type, cruise_level=None,
-            eobt_iso=eobt_iso, alternate1=alternate1, alternate2=alternate2,
-            aircraft_template_id=None, fl_window=0,
-            allow_vfr_downgrade=True,
-            poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
-            per_request_timeout_s=per_request_timeout_s,
-        )
-    except AutorouterError as e3:
-        # 3 essais échoués : on agrège les 3 messages pour que l'utilisateur
-        # voie laquelle (template / fenêtre FL / sans contrainte) a planté
-        # et avec quels flags. C'est la seule façon de diagnostiquer un
-        # couple qui résiste à tout retry — sinon on perd l'info des
-        # 2 premiers passages.
-        raise AutorouterError(
-            f"3 essais autorouter échoués. "
-            f"[1 strict] {err1} || "
-            f"[2 large FL] {err2} || "
-            f"[3 free FL] {e3}"
         )
 
 

@@ -1262,28 +1262,6 @@ if page_idx == 0:
     # If user just typed a new operator, override what the aircraft picker returned.
     if selected_operator and not ap.get("operator"):
         ap["operator"] = selected_operator
-    # Vérification template autorouter pour le type ICAO sélectionné — sans
-    # template côté autorouter, le routage IFR échoue avec WARN313 (le
-    # P28R fallback n'a pas l'équipement IFR).
-    ac_icao = (ap.get("type_icao") or "").strip()
-    if ac_icao:
-        from app import autorouter_client
-        ar_cfg_check = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
-        if ar_cfg_check.is_configured():
-            try:
-                tpl = autorouter_client.find_template_id_for_type(ar_cfg_check, ac_icao)
-                if tpl is None:
-                    st.warning(
-                        f"⚠️ Aucun template autorouter pour `{ac_icao}`. "
-                        f"Le routage automatique risque d'échouer "
-                        f"(Eurocontrol rejette l'absence d'équipement IFR). "
-                        f"Crée un template sur "
-                        f"[autorouter.aero/aircraft](https://www.autorouter.aero/aircraft)."
-                    )
-                else:
-                    st.success(f"✅ Template autorouter `{ac_icao}` trouvé (id {tpl}).")
-            except autorouter_client.AutorouterError:
-                pass  # silencieux si l'inventaire échoue (réseau / token)
     st.divider()
     st.subheader("Équipage")
     crew = _crew_picker("mission", operator=selected_operator)
