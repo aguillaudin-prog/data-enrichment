@@ -26,6 +26,7 @@ import json as _json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
@@ -300,6 +301,20 @@ def _build_route_request(
     if allow_vfr_downgrade:
         payload["vfrdowngrade"] = True
     if eobt_iso:
+        # Auto-bump si l'EOBT est dans le passé ou trop proche du présent :
+        # autorouter prend ~1 min à router puis ~30 s pour la validation
+        # Eurocontrol. Si l'EOBT < now + ~90 min, IFPS crache (R)EFPM51
+        # ("FPL PROCESSED AFTER ESTIMATED TIME OF ARRIVAL") et la route
+        # est rejetée. L'EOBT envoyé à autorouter est uniquement utilisé
+        # pour le routage — le mission EOBT reste celui de l'utilisateur.
+        try:
+            eobt_dt = datetime.fromisoformat(eobt_iso.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            min_eobt = now + timedelta(minutes=90)
+            if eobt_dt < min_eobt:
+                eobt_iso = min_eobt.isoformat()
+        except (ValueError, TypeError):
+            pass
         payload["departuretime"] = eobt_iso
     if cruise_level is not None:
         # Fenêtre large pour laisser autorouter choisir un FL routable
@@ -532,6 +547,25 @@ def suggest_route(
     """
     needs_vfr_first = _is_user_added(departure) or _is_user_added(destination)
     tpl_id = find_template_id_for_type(cfg, aircraft_type or "") if aircraft_type else None
+    # Détection "zéro template" : sans aucun appareil configuré dans le
+    # compte autorouter, le fallback aircraftid=0 (P28R) est traité comme
+    # VFR par défaut. IFPS rejette alors avec WARN313 sur tous les couples
+    # IFR. Fail-fast avec un message actionnable plutôt que 3 retries
+    # condamnés (~90 s de spinner pour rien).
+    if tpl_id is None and not needs_vfr_first:
+        try:
+            all_templates = list_aircraft_templates(cfg)
+        except AutorouterError:
+            all_templates = []  # ne bloque pas si l'inventaire échoue
+        if not all_templates:
+            raise AutorouterError(
+                "Ton compte autorouter n'a aucun template appareil. "
+                "Sans template, autorouter utilise un P28R sans équipement "
+                "IFR — Eurocontrol rejette la route (WARN313). "
+                "Crée au moins un template sur "
+                "https://www.autorouter.aero/aircraft pour ton appareil "
+                f"({aircraft_type or 'aucun type ICAO renseigné'})."
+            )
 
     def _retryable(err: AutorouterError) -> bool:
         msg = str(err).lower()
