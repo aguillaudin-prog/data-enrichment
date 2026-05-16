@@ -279,6 +279,57 @@ def _airport_payload(icao_or_label: str) -> Any:
     }
 
 
+def _build_inline_aircraft(aircraft_type: str | None) -> dict | None:
+    """Construit une définition appareil JSON inline pour bypass le besoin
+    d'un template configuré côté autorouter.aero. L'API accepte un objet
+    complet comme valeur de `aircraftid` (au lieu d'un entier ID).
+
+    On force l'équipement avionique IFR/RNAV5 standard (SDFGRY) et le
+    transpondeur Mode S — c'est ce que Eurocontrol exige pour considérer
+    le vol comme "ENTIRELY IFR/GAT" (sinon WARN313 et rejet de la route).
+
+    Retourne None si on n'a aucune info type → laisse le caller fall back
+    sur aircraftid=0 (built-in P28R).
+    """
+    icao = (aircraft_type or "").strip().upper()
+    if not icao:
+        return None
+    perf = db.find_aircraft_type(icao)
+    # Defaults raisonnables pour un turboprop léger si la base est vide.
+    cruise_tas = 140
+    ceiling_fl = 150
+    wake = "L"
+    if perf:
+        try:
+            cruise_tas = int(perf["cruise_tas_kt"]) if perf["cruise_tas_kt"] else cruise_tas
+        except (KeyError, IndexError, TypeError):
+            pass
+        try:
+            if perf["service_ceiling_ft"]:
+                ceiling_fl = int(perf["service_ceiling_ft"]) // 100
+        except (KeyError, IndexError, TypeError):
+            pass
+        try:
+            if perf["wake_category"]:
+                wake = (perf["wake_category"] or "L")[0].upper()
+        except (KeyError, IndexError, TypeError):
+            pass
+    return {
+        "icaotypename": icao,
+        # Équipement standard IFR + GNSS + PBN + 8.33 kHz. Ne pas ajouter W
+        # (RVSM) pour les turboprops légers — la plupart ne sont pas
+        # certifiés et ça déclencherait un autre warning IFPS.
+        "equipment": "SDFGRY",
+        "transponder": "S",
+        "wakecategory": wake,
+        "defaultmaxfl": ceiling_fl,
+        "cruisetas": cruise_tas,
+        # PBN/B2D2 = RNAV5 GNSS + DME/DME — config standard pour le routage
+        # sur airways européennes basses-moyennes altitudes.
+        "code": "PBN/B2D2",
+    }
+
+
 def _build_route_request(
     departure: str, destination: str,
     aircraft_type: str | None = None,
@@ -306,9 +357,17 @@ def _build_route_request(
         # selon les airways. Trop serré → internalerror.
         payload["minlevel"] = max(10, int(cruise_level) - fl_window)
         payload["maxlevel"] = int(cruise_level) + fl_window
-    # aircraftid : préfère le template utilisateur matchant le type ICAO
-    # (DHC6, DA62, L410). Fallback sur 0 = P28R built-in.
-    payload["aircraftid"] = aircraft_template_id if aircraft_template_id else 0
+    # aircraftid : préfère le template utilisateur configuré sur autorouter
+    # (le plus précis car contient l'équipement réel et la perf de l'avion).
+    # Sinon, on construit une définition appareil INLINE avec équipement
+    # IFR/RNAV5 forcé — ça évite l'échec systématique WARN313 d'Eurocontrol
+    # quand on tombe sur le built-in P28R (sans équipement IFR).
+    # Dernier fallback : aircraftid=0 (built-in) si on n'a vraiment rien.
+    if aircraft_template_id:
+        payload["aircraftid"] = aircraft_template_id
+    else:
+        inline = _build_inline_aircraft(aircraft_type)
+        payload["aircraftid"] = inline if inline else 0
     if alternate1:
         alt1 = _airport_payload(alternate1)
         if isinstance(alt1, str):
