@@ -1267,6 +1267,7 @@ if page_idx == 0:
     # P28R fallback n'a pas l'équipement IFR).
     ac_icao = (ap.get("type_icao") or "").strip()
     if ac_icao:
+        from app import autorouter_client
         ar_cfg_check = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
         if ar_cfg_check.is_configured():
             try:
