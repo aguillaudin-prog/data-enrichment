@@ -500,16 +500,16 @@ def _canonical_icao_type(raw: str) -> str:
 # selon les airways accessibles.
 _FALLBACK_AIRCRAFT_PERF: dict[str, dict] = {
     "DA62":  {"cruisetas": 175, "defaultmaxfl": 200, "wakecategory": "L",
-              "mtom": 2300, "mlw": 2190, "mzfw": 2150, "bew": 1502,
+              "MTOM": 2300, "MLW": 2190, "MZFW": 2150, "BEW": 1502,
               "maxfuel": 250, "climbrate": 1100, "descentrate": 1500},
     "DHC6":  {"cruisetas": 160, "defaultmaxfl": 250, "wakecategory": "L",
-              "mtom": 5670, "mlw": 5670, "mzfw": 5040, "bew": 3300,
+              "MTOM": 5670, "MLW": 5670, "MZFW": 5040, "BEW": 3300,
               "maxfuel": 1300, "climbrate": 1600, "descentrate": 1500},
     "L410":  {"cruisetas": 195, "defaultmaxfl": 200, "wakecategory": "L",
-              "mtom": 6600, "mlw": 6400, "mzfw": 5800, "bew": 4150,
+              "MTOM": 6600, "MLW": 6400, "MZFW": 5800, "BEW": 4150,
               "maxfuel": 1300, "climbrate": 1500, "descentrate": 1500},
     "B190":  {"cruisetas": 280, "defaultmaxfl": 250, "wakecategory": "M",
-              "mtom": 7765, "mlw": 7530, "mzfw": 7000, "bew": 4815,
+              "MTOM": 7765, "MLW": 7530, "MZFW": 7000, "BEW": 4815,
               "maxfuel": 1500, "climbrate": 2500, "descentrate": 2000},
 }
 
@@ -568,7 +568,7 @@ def _build_inline_aircraft(aircraft_type: str | None) -> dict | None:
     # Champs masses / perfs (MTOM, MLW, MZFW, BEW, fuel, climbrate, descentrate)
     # — requis par /aircraft pour les définitions persistantes. On les prend
     # du fallback table par type (DA62, DHC6, L410, B190) si présents.
-    for key in ("mtom", "mlw", "mzfw", "bew", "maxfuel",
+    for key in ("MTOM", "MLW", "MZFW", "BEW", "maxfuel",
                 "climbrate", "descentrate"):
         if key in fb:
             payload[key] = fb[key]
