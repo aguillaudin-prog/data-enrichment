@@ -300,10 +300,22 @@ def ensure_aircraft_for_type(
         _LAST_AIRCRAFT_DIAG = f"GET /aircraft/templates failed: {e}"
         return None
     catalog_entry: dict | None = None
+    # Le catalogue autorouter stocke les types avec des display names
+    # variables ("DA-62", "525B Citation CJ3", "172"). On compare en
+    # normalisant : on retire tous les non-alphanumériques + uppercase,
+    # de chaque côté. "DA-62" ↔ "DA62", "B-190D" ↔ "B190D" etc.
+    def _norm(s: str) -> str:
+        return "".join(c for c in (s or "").upper() if c.isalnum())
+    needle_norm = _norm(icao)
     for t in catalog:
-        for key in ("icao", "icaoid", "type", "icaotype", "designator"):
-            v = (t.get(key) or "").upper().strip() if isinstance(t.get(key), str) else ""
-            if v and v == icao:
+        for key in ("icao", "icaotype", "designator", "model", "modelname"):
+            v = t.get(key)
+            if not isinstance(v, str):
+                continue
+            v_norm = _norm(v)
+            # Match strict OU le canonique est un préfixe du catalogue
+            # (ex: B190 ↔ B190D ; L410 ↔ L410UVPE20).
+            if v_norm and (v_norm == needle_norm or v_norm.startswith(needle_norm)):
                 catalog_entry = t
                 break
         if catalog_entry:
