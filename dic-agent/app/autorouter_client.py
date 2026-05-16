@@ -393,17 +393,13 @@ def _build_route_request(
         # selon les airways. Trop serré → internalerror.
         payload["minlevel"] = max(10, int(cruise_level) - fl_window)
         payload["maxlevel"] = int(cruise_level) + fl_window
-    # aircraftid : préfère le template utilisateur configuré sur autorouter
-    # (le plus précis car contient l'équipement réel et la perf de l'avion).
-    # Sinon, on construit une définition appareil INLINE avec équipement
-    # IFR/RNAV5 forcé — ça évite l'échec systématique WARN313 d'Eurocontrol
-    # quand on tombe sur le built-in P28R (sans équipement IFR).
-    # Dernier fallback : aircraftid=0 (built-in) si on n'a vraiment rien.
-    if aircraft_template_id:
-        payload["aircraftid"] = aircraft_template_id
-    else:
-        inline = _build_inline_aircraft(aircraft_type)
-        payload["aircraftid"] = inline if inline else 0
+    # aircraftid : préfère le template utilisateur configuré sur autorouter.
+    # Fallback sur 0 = built-in P28R. L'inline JSON dans ce champ n'est PAS
+    # supporté par /router (HTTP 500 "Array to string conversion" côté PHP),
+    # contrairement à ce que le wiki suggère pour /flightplan. Pour bypass
+    # le besoin de template manuel, on POST /aircraft/templates ailleurs
+    # (voir ensure_template_for_type) et on récupère un ID utilisable ici.
+    payload["aircraftid"] = aircraft_template_id if aircraft_template_id else 0
     if alternate1:
         alt1 = _airport_payload(alternate1)
         if isinstance(alt1, str):
