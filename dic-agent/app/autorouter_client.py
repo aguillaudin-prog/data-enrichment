@@ -309,7 +309,22 @@ def ensure_aircraft_for_type(
         if catalog_entry:
             break
     if not catalog_entry:
-        _LAST_AIRCRAFT_DIAG = f"no catalog entry for {icao} (out of {len(catalog)} types)"
+        # Dump quelques entrées pour qu'on voie la vraie structure
+        # retournée par autorouter (les noms de clé peuvent différer).
+        sample_keys = sorted(catalog[0].keys()) if catalog else []
+        # Sortie compacte de tous les "ICAO-likes" pour voir ce qui est dispo.
+        all_icaos = []
+        for t in catalog:
+            for k in ("icao", "icaoid", "type", "icaotype", "designator",
+                      "name", "model", "modelname"):
+                v = t.get(k)
+                if isinstance(v, str) and v.strip():
+                    all_icaos.append(f"{k}={v}")
+                    break
+        _LAST_AIRCRAFT_DIAG = (
+            f"no catalog match for {icao} (catalog={len(catalog)} entries, "
+            f"keys={sample_keys}, sample={all_icaos[:20]})"
+        )
         return None
     # IDs côté catalogue. Les noms de clé varient — on essaie en cascade.
     manufacturer_id = (
