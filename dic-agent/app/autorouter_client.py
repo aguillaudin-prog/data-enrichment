@@ -26,6 +26,7 @@ import json as _json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
@@ -461,6 +462,18 @@ def _build_route_request(
     if allow_vfr_downgrade:
         payload["vfrdowngrade"] = True
     if eobt_iso:
+        # Auto-bump si l'EOBT est dans le passé ou trop proche du présent.
+        # IFPS valide à "now" : un EOBT 00:00 d'aujourd'hui rend les zones
+        # militaires (LFFRASE/LFFRASW) actives à tort et la STAR rejette
+        # pour "FPL processed after ETA". L'EOBT envoyé est uniquement
+        # pour le routage — le mission EOBT affiché reste celui de l'user.
+        try:
+            eobt_dt = datetime.fromisoformat(eobt_iso.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            if eobt_dt < now + timedelta(minutes=30):
+                eobt_iso = (now + timedelta(minutes=90)).isoformat()
+        except (ValueError, TypeError):
+            pass
         payload["departuretime"] = eobt_iso
     if cruise_level is not None:
         # Fenêtre large pour laisser autorouter choisir un FL routable
@@ -728,11 +741,15 @@ def suggest_route(
         # équipement IFR) est strictement pire (WARN313 garanti). Le 1er
         # essai peut échouer pour mille raisons (FL trop serré, alternate
         # bizarre, etc.) qui ne sont pas liées à l'appareil.
+        # cruise_level=None : autorouter choisit librement le FL dans
+        # l'enveloppe de l'appareil (DA-62 template plafonne à FL200).
+        # Couvre les couples où les airways accessibles à la cruise
+        # demandée par l'user n'existent pas ou sont restreintes.
         return _suggest_route_once(
             cfg, departure, destination,
-            aircraft_type=aircraft_type, cruise_level=cruise_level,
+            aircraft_type=aircraft_type, cruise_level=None,
             eobt_iso=eobt_iso, alternate1=alternate1, alternate2=alternate2,
-            aircraft_template_id=tpl_id, fl_window=150,
+            aircraft_template_id=tpl_id, fl_window=0,
             allow_vfr_downgrade=True,
             poll_timeout_s=poll_timeout_s, poll_interval_s=poll_interval_s,
             per_request_timeout_s=per_request_timeout_s,
