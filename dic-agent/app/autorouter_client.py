@@ -279,6 +279,40 @@ def _airport_payload(icao_or_label: str) -> Any:
     }
 
 
+def _canonical_icao_type(raw: str) -> str:
+    """Normalise un type appareil saisi par l'utilisateur en code ICAO
+    4 lettres standard. Les types DIC sont souvent saisis avec leur suffixe
+    variant (DHC6-400, B1900D, L410UVP-E20) — ces formes ne sont pas
+    reconnues par autorouter ni par notre table aircraft_type.
+
+    Exemples :
+      DHC6-400 → DHC6
+      B1900D   → B190
+      L410UVP  → L410
+      DA62     → DA62 (déjà 4 lettres)
+    """
+    s = (raw or "").strip().upper()
+    if not s:
+        return ""
+    # On garde la base avant tout tiret / suffixe variant
+    base = s.split("-")[0]
+    # Les designators ICAO font 2-4 lettres+chiffres. Si la base est plus
+    # longue, on garde les 4 premiers caractères.
+    return base[:4]
+
+
+# Fallback perf par ICAO designator pour les appareils qu'on opère,
+# au cas où la table aircraft_type serait incomplète. Valeurs nominales
+# manufacturer / Wikipedia, pas critique → autorouter ajuste de toute façon
+# selon les airways accessibles.
+_FALLBACK_AIRCRAFT_PERF: dict[str, dict] = {
+    "DA62":  {"cruisetas": 175, "defaultmaxfl": 200, "wakecategory": "L"},
+    "DHC6":  {"cruisetas": 160, "defaultmaxfl": 250, "wakecategory": "L"},
+    "L410":  {"cruisetas": 195, "defaultmaxfl": 200, "wakecategory": "L"},
+    "B190":  {"cruisetas": 280, "defaultmaxfl": 250, "wakecategory": "M"},
+}
+
+
 def _build_inline_aircraft(aircraft_type: str | None) -> dict | None:
     """Construit une définition appareil JSON inline pour bypass le besoin
     d'un template configuré côté autorouter.aero. L'API accepte un objet
@@ -291,14 +325,16 @@ def _build_inline_aircraft(aircraft_type: str | None) -> dict | None:
     Retourne None si on n'a aucune info type → laisse le caller fall back
     sur aircraftid=0 (built-in P28R).
     """
-    icao = (aircraft_type or "").strip().upper()
+    icao = _canonical_icao_type(aircraft_type)
     if not icao:
         return None
+    # Priorité 1 : perf depuis notre base. Priorité 2 : fallback table.
+    # Priorité 3 : defaults turboprop léger générique.
     perf = db.find_aircraft_type(icao)
-    # Defaults raisonnables pour un turboprop léger si la base est vide.
-    cruise_tas = 140
-    ceiling_fl = 150
-    wake = "L"
+    fb = _FALLBACK_AIRCRAFT_PERF.get(icao, {})
+    cruise_tas = fb.get("cruisetas", 140)
+    ceiling_fl = fb.get("defaultmaxfl", 150)
+    wake = fb.get("wakecategory", "L")
     if perf:
         try:
             cruise_tas = int(perf["cruise_tas_kt"]) if perf["cruise_tas_kt"] else cruise_tas
