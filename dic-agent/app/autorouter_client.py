@@ -235,206 +235,54 @@ def list_aircraft(cfg: AutorouterConfig) -> list[dict]:
         return [a for a in data["aircraft"] if isinstance(a, dict)]
     return []
 
-
-# Cache module-level (vit la durée du process Streamlit) : on POST /aircraft
-# une seule fois par type ICAO, on réutilise l'ID ensuite. Évite de remplir
-# le compte autorouter de doublons.
-_AIRCRAFT_ID_CACHE: dict[str, int] = {}
-# Diagnostic de la dernière action ensure_aircraft_for_type — surfaceé dans
-# les messages d'erreur /router pour qu'on sache exactement ce qui a été
-# fait avec l'aircraft setup (créé / réutilisé / échec API).
-_LAST_AIRCRAFT_DIAG: str = ""
-
-
-def ensure_aircraft_for_type(
-    cfg: AutorouterConfig,
-    icao_type: str,
-    callsign: str = "",
-) -> int | None:
-    """Garantit qu'un appareil autorouter existe pour le type ICAO donné
-    avec un équipement avionique IFR complet. Retourne son ID utilisable
-    comme `aircraftid` dans /router.
-
-    Workflow :
-      1. Lookup cache module-level → return cached ID si déjà résolu.
-      2. GET /aircraft → si un appareil existant matche le type ICAO,
-         on prend le sien (l'utilisateur peut avoir personnalisé la perf).
-      3. POST /aircraft avec équipement IFR forcé (SDFGRY) + transpondeur
-         Mode S + perf de notre table aircraft_type ou fallback table.
-
-    Retourne None si la création échoue (réseau, auth, schema), le caller
-    fall-back alors sur aircraftid=0 (built-in P28R) — moins bon que le
-    template dédié mais évite le crash.
-    """
-    global _LAST_AIRCRAFT_DIAG
-    icao = _canonical_icao_type(icao_type)
-    if not icao:
-        _LAST_AIRCRAFT_DIAG = "skip (no ICAO type)"
-        return None
-    if icao in _AIRCRAFT_ID_CACHE:
-        _LAST_AIRCRAFT_DIAG = f"cached {icao} id={_AIRCRAFT_ID_CACHE[icao]}"
-        return _AIRCRAFT_ID_CACHE[icao]
-    # 1. Cherche un appareil existant matchant
-    try:
-        existing = list_aircraft(cfg)
-    except AutorouterError as e:
-        existing = []
-        _LAST_AIRCRAFT_DIAG = f"GET /aircraft failed: {e}"
-    for ac in existing:
-        ac_type = (ac.get("icaotypename") or ac.get("icaotype") or "").upper()
-        if ac_type and _canonical_icao_type(ac_type) == icao:
-            try:
-                aid = int(ac.get("id"))
-            except (TypeError, ValueError):
-                continue
-            _AIRCRAFT_ID_CACHE[icao] = aid
-            _LAST_AIRCRAFT_DIAG = f"found existing {icao} id={aid}"
-            return aid
-    # 2. Lookup catalogue autorouter pour récupérer les IDs manufacturer +
-    # icaotype requis par POST /aircraft (sans eux : HTTP 500 "missing
-    # manufacturer"). Le catalogue est l'inventaire complet manufacturer /
-    # model / icaotype maintenu par autorouter.
-    try:
-        catalog = list_aircraft_templates(cfg)
-    except AutorouterError as e:
-        _LAST_AIRCRAFT_DIAG = f"GET /aircraft/templates failed: {e}"
-        return None
-    catalog_entry: dict | None = None
-    # Le catalogue autorouter stocke les types avec des display names
-    # variables ("DA-62", "525B Citation CJ3", "172"). On compare en
-    # normalisant : on retire tous les non-alphanumériques + uppercase,
-    # de chaque côté. "DA-62" ↔ "DA62", "B-190D" ↔ "B190D" etc.
-    def _norm(s: str) -> str:
-        return "".join(c for c in (s or "").upper() if c.isalnum())
-    needle_norm = _norm(icao)
-    for t in catalog:
-        for key in ("icao", "icaotype", "designator", "model", "modelname"):
-            v = t.get(key)
-            if not isinstance(v, str):
-                continue
-            v_norm = _norm(v)
-            # Match strict OU le canonique est un préfixe du catalogue
-            # (ex: B190 ↔ B190D ; L410 ↔ L410UVPE20).
-            if v_norm and (v_norm == needle_norm or v_norm.startswith(needle_norm)):
-                catalog_entry = t
-                break
-        if catalog_entry:
-            break
-    if not catalog_entry:
-        # Dump quelques entrées pour qu'on voie la vraie structure
-        # retournée par autorouter (les noms de clé peuvent différer).
-        sample_keys = sorted(catalog[0].keys()) if catalog else []
-        # Sortie compacte de tous les "ICAO-likes" pour voir ce qui est dispo.
-        all_icaos = []
-        for t in catalog:
-            for k in ("icao", "icaoid", "type", "icaotype", "designator",
-                      "name", "model", "modelname"):
-                v = t.get(k)
-                if isinstance(v, str) and v.strip():
-                    all_icaos.append(f"{k}={v}")
-                    break
-        _LAST_AIRCRAFT_DIAG = (
-            f"no catalog match for {icao} (catalog={len(catalog)} entries, "
-            f"keys={sample_keys}, sample={all_icaos[:20]})"
-        )
-        return None
-    # IDs côté catalogue. Les noms de clé varient — on essaie en cascade.
-    manufacturer_id = (
-        catalog_entry.get("manufacturerid")
-        or catalog_entry.get("manufacturer_id")
-        or catalog_entry.get("manufacturer")
-    )
-    icao_type_id = (
-        catalog_entry.get("id")
-        or catalog_entry.get("icaotypeid")
-        or catalog_entry.get("icao_type_id")
-    )
-    model_name = (
-        catalog_entry.get("model")
-        or catalog_entry.get("modelname")
-        or icao
-    )
-    # 3. Crée l'appareil via POST /aircraft avec tous les champs requis
-    body = _build_inline_aircraft(icao) or {}
-    body["callsign"] = (callsign or f"ZZZ{icao}")[:7]
-    body["manufacturer"] = manufacturer_id
-    body["icaotype"] = icao_type_id
-    # Le wiki dit "modelname" mais l'API rejette avec "missing model" si on
-    # n'envoie que modelname. On envoie les deux pour couvrir les deux
-    # nommages observés en pratique.
-    body["model"] = model_name
-    body["modelname"] = model_name
-    body["year"] = 2020  # arbitraire mais requis pour les définitions persistantes
-    try:
-        resp = requests.post(
-            f"{cfg.base_url}/aircraft",
-            json=body, headers=_auth_headers(cfg), timeout=30,
-        )
-    except requests.exceptions.RequestException as e:
-        _LAST_AIRCRAFT_DIAG = f"POST /aircraft network: {e}"
-        return None
-    if resp.status_code != 200:
-        _LAST_AIRCRAFT_DIAG = (
-            f"POST /aircraft HTTP {resp.status_code}: {resp.text[:200]} "
-            f"(body keys: {sorted(body.keys())})"
-        )
-        return None
-    try:
-        data = resp.json()
-    except ValueError:
-        _LAST_AIRCRAFT_DIAG = f"POST /aircraft non-JSON: {resp.text[:200]}"
-        return None
-    aid = None
-    if isinstance(data, int):
-        aid = data
-    elif isinstance(data, dict):
-        aid = data.get("id") or data.get("aircraftid")
-    elif isinstance(data, str) and data.strip().isdigit():
-        aid = int(data.strip())
-    try:
-        aid_int = int(aid) if aid is not None else None
-    except (TypeError, ValueError):
-        _LAST_AIRCRAFT_DIAG = f"POST /aircraft unexpected body: {data!r}"
-        return None
-    if aid_int is not None:
-        _AIRCRAFT_ID_CACHE[icao] = aid_int
-        _LAST_AIRCRAFT_DIAG = f"created {icao} id={aid_int}"
-    return aid_int
-
-
 def find_template_id_for_type(cfg: AutorouterConfig, icao_type: str) -> int | None:
-    """Look up the aircraft template ID best matching `icao_type`.
+    """Look up the public aircraft template ID matching `icao_type`.
 
-    Matching is case-insensitive and tolerates the DHC6-400 vs DHC6 split
-    (compares first 4 letters of the type code). Returns None if no match
-    so the caller falls back to autorouter's built-in P28R (aircraftid=0).
+    Catalog entries use display names ("DA-62", "L-410", "172", "1900D")
+    not canonical ICAO 4-letter designators. We normalise both sides by
+    stripping non-alphanumerics + uppercase, then match by exact equality
+    or startswith (so DHC6 catches "DHC-6 Twin Otter").
+
+    Returns the catalog entry's `id` — directly usable as `aircraftid` in
+    /router payloads since these 67 templates are public + validated by
+    autorouter. None if no match so caller falls back to aircraftid=0.
     """
     if not icao_type:
         return None
-    needle = icao_type.strip().upper()
+    canonical = _canonical_icao_type(icao_type)
+    if not canonical:
+        return None
     try:
         templates = list_aircraft_templates(cfg)
     except AutorouterError:
         return None
     if not templates:
         return None
-    # Strong match: exact ICAO designator
-    for t in templates:
-        for key in ("icao", "icaoid", "type", "icaotype", "designator"):
-            v = (t.get(key) or "").upper().strip()
-            if v and v == needle:
-                tid = t.get("id") or t.get("aircraftid") or t.get("templateid")
-                if tid is not None:
-                    return int(tid)
-    # Weak match: same first 4 letters (DHC6-400 ↔ DHC6)
-    needle4 = needle[:4]
-    for t in templates:
-        for key in ("icao", "icaoid", "type", "icaotype", "designator"):
-            v = (t.get(key) or "").upper().strip()
-            if v and v[:4] == needle4:
-                tid = t.get("id") or t.get("aircraftid") or t.get("templateid")
-                if tid is not None:
-                    return int(tid)
+
+    def _norm(s: str) -> str:
+        return "".join(c for c in (s or "").upper() if c.isalnum())
+
+    needle_norm = _norm(canonical)
+    # 1er passage : match exact normalisé. 2ème passage : startswith
+    # pour capter les variantes longues (DHC6 ↔ "DHC-6 Twin Otter").
+    for strict in (True, False):
+        for t in templates:
+            for key in ("icao", "icaoid", "type", "icaotype", "designator",
+                        "model", "modelname"):
+                v = t.get(key)
+                if not isinstance(v, str):
+                    continue
+                v_norm = _norm(v)
+                if not v_norm:
+                    continue
+                hit = (v_norm == needle_norm) if strict else v_norm.startswith(needle_norm)
+                if hit:
+                    tid = t.get("id") or t.get("aircraftid") or t.get("templateid")
+                    if tid is not None:
+                        try:
+                            return int(tid)
+                        except (TypeError, ValueError):
+                            continue
     return None
 
 
@@ -775,10 +623,9 @@ def _suggest_route_once(
                                 if aircraft_template_id
                                 else "aircraftid=0 (P28R built-in)"
                             )
-                            setup_diag = _LAST_AIRCRAFT_DIAG or "—"
                             raise AutorouterError(
                                 f"Autorouter n'a pas trouvé de route. "
-                                f"{ac_diag}. Setup : {setup_diag}. "
+                                f"{ac_diag}. "
                                 f"Flags : {flags_str}. Logs : {tail}"
                             )
                         # routesuccess=true but no `solution` command yet:
@@ -834,12 +681,6 @@ def suggest_route(
     """
     needs_vfr_first = _is_user_added(departure) or _is_user_added(destination)
     tpl_id = find_template_id_for_type(cfg, aircraft_type or "") if aircraft_type else None
-    # Si aucun template/aircraft existant pour ce type, on en crée un via
-    # POST /aircraft avec équipement IFR forcé. Évite le fallback sur
-    # aircraftid=0 (P28R built-in sans équipement IFR) qui produit WARN313
-    # à tous les coups sur les couples civils IFR.
-    if tpl_id is None and aircraft_type and not needs_vfr_first:
-        tpl_id = ensure_aircraft_for_type(cfg, aircraft_type)
 
     try:
         return _suggest_route_once(
