@@ -330,43 +330,60 @@ def _search_airports(query: str) -> list[tuple[str, str]]:
 
 
 def _apt_input(label: str, default: str, field_key: str) -> str:
-    """Single ICAO field with always-visible autocomplete dropdown.
+    """Champ ICAO natif + suggestions cliquables.
 
-    Behaviour : la searchbox reste toujours affichée. Tant qu'aucune
-    sélection n'a été faite, la valeur courante (provenant d'un template
-    ou d'une saisie précédente) sert de valeur active et est rappelée
-    par une caption « ✓ Sélectionné : XXX ». Dès qu'on clique sur un
-    item du dropdown → ça remplace immédiatement, pas de bouton crayon.
+    streamlit-searchbox (composant React 3rd-party) perd le focus à
+    chaque rerun Streamlit → 1er keystroke perdu systématiquement.
+    Le debounce ne corrige pas ça : c'est une limite architecturale
+    du composant.
 
-    streamlit-searchbox's `default` ne pré-remplit pas visuellement le
-    champ, d'où la caption explicite.
+    Remplacement : `st.text_input` natif (jamais de focus jump) + une
+    petite liste de boutons-suggestions sous le champ quand la saisie
+    n'est pas un ICAO 4-lettres reconnu. L'utilisateur tape ICAO
+    direct (cas 90%) ou clique sur une suggestion par nom (cas 10%).
     """
-    from streamlit_searchbox import st_searchbox
+    # Valeur courante : soit suggestion cliquée en attente, soit la
+    # saisie utilisateur, soit le default fourni.
+    pending = st.session_state.pop(f"{field_key}_pending", None)
+    if pending is not None:
+        st.session_state[field_key] = pending
 
-    selected = st_searchbox(
-        _search_airports,
-        placeholder="Tape ICAO ou nom (ex. EDDL, Düsseldorf)",
-        label=label,
-        default=None,
+    raw = st.text_input(
+        label,
+        value=st.session_state.get(field_key, default or ""),
+        placeholder="ICAO (ex. LFPB) ou nom (ex. Le Bourget)",
         key=field_key,
-        clear_on_submit=False,
-        # debounce 200ms : laisse au composant React le temps de stabiliser
-        # son focus avant que le 1er keystroke ne déclenche un rerun
-        # Streamlit. Sans ça, le widget "saute" à la première saisie.
-        debounce=200,
+        max_chars=40,
     )
-    if isinstance(selected, str) and selected.strip():
-        value = selected.strip().upper()
-    else:
-        value = (default or "").strip().upper()
+    raw = (raw or "").strip()
+    value = raw.upper() if len(raw) <= 4 else raw
 
-    if value:
+    # Si la saisie est un ICAO 4-lettres trouvé en base → caption verte
+    # et on retourne directement, pas de suggestions à afficher.
+    if len(value) == 4 and value.isalnum():
         ap = db.find_airport(value)
         if ap:
             country = f" ({ap['country_iso']})" if ap['country_iso'] else ""
-            st.caption(f"✓ Sélectionné : **{value}** · {ap['name']}{country}")
-        else:
-            st.caption(f"✓ Sélectionné : **{value}** (inconnu en base)")
+            st.caption(f"✓ **{value}** · {ap['name']}{country}")
+            return value
+
+    # Sinon, suggestions filtrées (max 6, boutons cliquables) — la saisie
+    # peut être un fragment ICAO ou un nom de ville/aérodrome.
+    if len(raw) >= 2:
+        suggestions = _search_airports(raw)[:6]
+        if suggestions:
+            cols = st.columns(min(len(suggestions), 3))
+            for i, (label_txt, icao) in enumerate(suggestions):
+                with cols[i % 3]:
+                    # Affichage compact : `LFPB · Le Bourget (FR)`
+                    short = label_txt.replace("**", "").split("·")[0].strip()
+                    full = label_txt.replace("**", "")
+                    if st.button(full, key=f"{field_key}_sug_{icao}", help=short):
+                        st.session_state[f"{field_key}_pending"] = icao
+                        st.rerun()
+        elif raw:
+            st.caption(f"⚠️ Aucun aérodrome ne matche `{raw}`")
+
     return value
 
 
