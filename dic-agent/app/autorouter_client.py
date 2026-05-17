@@ -771,6 +771,24 @@ def _normalise_solution(
     if len(waypoints) > 2:
         # Drop departure + destination; the middle is the enroute portion
         route_text = " ".join(waypoints[1:-1])
+    # Si IFPS a émis une suggestion SUGGEST:..., on la préfère à la version
+    # waypoint-by-waypoint qui contient souvent des SID expandés invalides
+    # (ex: "PB253 PB259 PB260 OXCEL ..." rejeté par les validateurs car
+    # PB259 n'est pas un airway). Le SUGGEST IFPS est la version Item-15
+    # condensée et propre, directement injectable dans un FPL.
+    for line in logs:
+        if "SUGGEST:" not in line:
+            continue
+        # Format typique : "fplvalidation: SUGGEST:N0174F150 MONOT6F MONOT R161 TRARE R31 MTL MTL7V"
+        sug = line.split("SUGGEST:", 1)[1].strip()
+        # Le SUGGEST commence par "N0174F150" (vitesse + FL) — on retire
+        # ce premier token qui n'a pas sa place dans le champ route.
+        tokens = sug.split()
+        if tokens and tokens[0][0].upper() in ("N", "M", "K"):
+            tokens = tokens[1:]
+        if tokens:
+            route_text = " ".join(tokens)
+            break
     distance = float(solution.get("routedist") or (fpl_fallback or {}).get("routedist") or 0.0)
     fuel = float(solution.get("routefuel") or (fpl_fallback or {}).get("routefuel") or 0.0)
     time_s = int(solution.get("routetime") or (fpl_fallback or {}).get("routetime") or 0)

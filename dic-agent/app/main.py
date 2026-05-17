@@ -350,6 +350,10 @@ def _apt_input(label: str, default: str, field_key: str) -> str:
         default=None,
         key=field_key,
         clear_on_submit=False,
+        # debounce 200ms : laisse au composant React le temps de stabiliser
+        # son focus avant que le 1er keystroke ne déclenche un rerun
+        # Streamlit. Sans ça, le widget "saute" à la première saisie.
+        debounce=200,
     )
     if isinstance(selected, str) and selected.strip():
         value = selected.strip().upper()
@@ -1481,6 +1485,13 @@ if page_idx == 1:
     _step_nav_footer()
 
 if page_idx == 2:
+    # Streamlit garde la position de scroll de la page précédente — sur
+    # Preview qui est plus longue que Mission/Legs, ça atterrit en bas.
+    # On force le scroll en haut via une injection JS one-shot.
+    st.markdown(
+        "<script>window.parent.document.querySelector('section.main').scrollTo({top: 0, behavior: 'instant'});</script>",
+        unsafe_allow_html=True,
+    )
     if not st.session_state.legs or not any(l.get("origin") for l in st.session_state.legs):
         st.info("Saisis au moins un leg avec une origine.")
         st.stop()
