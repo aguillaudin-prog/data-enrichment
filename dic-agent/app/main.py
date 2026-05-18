@@ -688,6 +688,99 @@ def _render_briefing_section(*, legs: list[dict]) -> None:
     _render_gramet_section(legs=legs, ar_cfg=ar_cfg)
 
 
+def _render_leg_map(resolution, leg: dict) -> None:
+    """Carte interactive de la route (pydeck, livré avec streamlit, pas
+    de dépendance ajoutée). Visualise :
+
+    - Aéro origine (carré vert)
+    - Aéro destination (carré rouge)
+    - Alternate (losange orange) si saisi
+    - Waypoints résolus en base (cercles bleus)
+    - Ligne reliant l'ordre du FPL
+
+    Détection visuelle d'erreurs courantes : route qui zigzague, frontière
+    manquante, alternate à l'autre bout du continent, waypoint mal résolu.
+    """
+    import pydeck as pdk
+
+    origin_icao = leg.get("origin", "")
+    destination_icao = leg.get("destination", "")
+    alternate_icao = (leg.get("alternate") or "").strip().upper()
+
+    # Récupère lat/lon des aéros + waypoints
+    ap_o = db.find_airport(origin_icao) if origin_icao else None
+    ap_d = db.find_airport(destination_icao) if destination_icao else None
+    ap_a = db.find_airport(alternate_icao) if alternate_icao else None
+    if not (ap_o and ap_d):
+        return  # pas la peine de tracer si aéros manquants
+
+    # Points pour markers : (lat, lon, label, color, size)
+    markers: list[dict] = []
+    markers.append({
+        "lat": float(ap_o["lat"]), "lon": float(ap_o["lon"]),
+        "label": origin_icao, "color": [40, 180, 60], "size": 12,
+    })
+    markers.append({
+        "lat": float(ap_d["lat"]), "lon": float(ap_d["lon"]),
+        "label": destination_icao, "color": [220, 60, 60], "size": 12,
+    })
+    if ap_a:
+        markers.append({
+            "lat": float(ap_a["lat"]), "lon": float(ap_a["lon"]),
+            "label": f"ALT {alternate_icao}", "color": [240, 160, 40], "size": 10,
+        })
+    # Waypoints intermédiaires résolus
+    coord_pts: list[tuple[float, float]] = [(float(ap_o["lat"]), float(ap_o["lon"]))]
+    for p in (resolution.points or []):
+        if p.lat is None or p.lon is None:
+            continue
+        if p.label in (origin_icao, destination_icao):
+            continue
+        markers.append({
+            "lat": float(p.lat), "lon": float(p.lon),
+            "label": p.label, "color": [80, 130, 200], "size": 7,
+        })
+        coord_pts.append((float(p.lat), float(p.lon)))
+    coord_pts.append((float(ap_d["lat"]), float(ap_d["lon"])))
+
+    # Ligne reliant les points dans l'ordre
+    line_path = [{"path": [[lon, lat] for lat, lon in coord_pts], "color": [100, 100, 240]}]
+
+    # View centrée sur le midpoint, zoom inversement proportionnel à la distance
+    mid_lat = (float(ap_o["lat"]) + float(ap_d["lat"])) / 2
+    mid_lon = (float(ap_o["lon"]) + float(ap_d["lon"])) / 2
+    dist_nm = resolution.total_distance_nm or 100
+    # Heuristique : zoom 5 pour 100 NM, zoom 3 pour 1500 NM, zoom 2 pour 4000 NM
+    zoom = max(2, min(6, 7 - (dist_nm / 300)))
+
+    layers = [
+        pdk.Layer(
+            "PathLayer", line_path,
+            get_path="path", get_color="color", get_width=3,
+            width_min_pixels=2,
+        ),
+        pdk.Layer(
+            "ScatterplotLayer", markers,
+            get_position="[lon, lat]", get_fill_color="color",
+            get_radius="size * 1000", pickable=True,
+        ),
+        pdk.Layer(
+            "TextLayer", markers,
+            get_position="[lon, lat]", get_text="label",
+            get_color=[20, 20, 20], get_size=14, get_alignment_baseline="bottom",
+        ),
+    ]
+    deck = pdk.Deck(
+        layers=layers,
+        initial_view_state=pdk.ViewState(
+            latitude=mid_lat, longitude=mid_lon, zoom=zoom, pitch=0,
+        ),
+        map_style="light",
+        tooltip={"text": "{label}"},
+    )
+    st.pydeck_chart(deck, width="stretch", height=350)
+
+
 def _render_pre_dic_checklist(mission: dict, legs: list[dict]) -> bool:
     """Validation systématique avant export. Retourne True si OK pour générer
     (pas de check rouge), False sinon. Affiche un panneau couleurs.
@@ -1696,6 +1789,12 @@ if page_idx == 2:
         c1.metric("Distance", f"{resolution.total_distance_nm:.0f} NM")
         c2.metric("Temps de vol", f"{resolution.total_time_min:.0f} min")
         c3.metric("Pays traversés", str(len(resolution.segments)))
+
+        # Carte visuelle de la route (origine + destination + waypoints + alt)
+        try:
+            _render_leg_map(resolution, leg)
+        except Exception as e:
+            st.caption(f"_(carte indisponible : {type(e).__name__})_")
 
         rows_view = []
         for seg in resolution.segments:
