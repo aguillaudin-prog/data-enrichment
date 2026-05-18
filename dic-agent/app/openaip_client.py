@@ -59,8 +59,19 @@ class OpenAIPError(RuntimeError):
 def _api_key() -> str:
     key = os.environ.get("OPENAIP_API_KEY", "").strip()
     if not key:
+        # Fallback Streamlit Cloud : les secrets sont exposés via
+        # st.secrets, pas via os.environ. On essaie cet accès si dispo
+        # (import paresseux pour ne pas dépendre de streamlit en CLI).
+        try:
+            import streamlit as _st
+            key = (_st.secrets.get("OPENAIP_API_KEY") or "").strip()
+        except Exception:
+            key = ""
+    if not key:
         raise OpenAIPError(
-            "OPENAIP_API_KEY missing. Copy .env.example to .env and fill OPENAIP_API_KEY."
+            "OPENAIP_API_KEY missing. Local : copy .env.example to .env "
+            "and fill OPENAIP_API_KEY. Streamlit Cloud : add "
+            "OPENAIP_API_KEY = \"xxx\" in Settings → Secrets."
         )
     return key
 
