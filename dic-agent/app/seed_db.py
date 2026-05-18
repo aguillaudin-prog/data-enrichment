@@ -234,32 +234,17 @@ def seed_amazone_missions() -> int:
     unidirectionnelles consommées par l'auto-apply. Ces missions sont
     consommées par _apply_template via le picker.
     """
+    # Catalogue complet Amazone PDF — 15 routes numérotées (1 à 15),
+    # 23 missions au total avec les variants (1.A/1.B/1.C, 11.A/11.B, etc.).
+    # Organisées par dossier en fonction du hub :
+    #   - Bénin       : DBBB ou TOUROU comme bout (routes 1, 2, 11, 12, 13, 14, 15)
+    #   - Côte d'Ivoire : DIAP-only (routes 3, 8, 9)
+    #   - Sénégal-Guinée : GUCY ↔ GOBD (route 4) + GOBD ↔ GQNO (route 7)
+    #   - Cameroun    : FKYS ↔ FOOL / FKKN (routes 5, 6)
+    #   - Mauritanie  : GQNO ↔ GQND (route 10)
     missions = [
-        ("BÉNIN / DBBB ↔ DNAA (Abuja)", [
-            {"order": 1, "origin": "DBBB", "destination": "DNAA",
-             "route_text": "TYE - POLTO - LAG - R778 - KELIG - W951 - MESES - ABC",
-             "fl": 90, "tas": 140, "alternate": "DNKA"},
-            {"order": 2, "origin": "DNAA", "destination": "DBBB",
-             "route_text": "ABC - VONUK - H340 - LAG - POLTO - TYE",
-             "fl": 100, "tas": 140, "alternate": "DXXX"},
-        ]),
-        ("BÉNIN / DBBB ↔ DNMN (Minna)", [
-            {"order": 1, "origin": "DBBB", "destination": "DNMN",
-             "route_text": "TYE - POLTO - LAG - L433 - IBA - R778 - TEGDA - MNA",
-             "fl": 90, "tas": 140, "alternate": "DNAA"},
-            {"order": 2, "origin": "DNMN", "destination": "DBBB",
-             "route_text": "MNA - MAGIA - V377 - LAG - POLTO - TYE",
-             "fl": 100, "tas": 140, "alternate": "DXXX"},
-        ]),
-        ("BÉNIN / DBBB ↔ DNIL (Ilorin)", [
-            {"order": 1, "origin": "DBBB", "destination": "DNIL",
-             "route_text": "TYE - POLTO - LAG - L433 - IBA - ILR",
-             "fl": 90, "tas": 140, "alternate": "DNIB"},
-            {"order": 2, "origin": "DNIL", "destination": "DBBB",
-             "route_text": "ILR - USGUN - V377 - LAG - POLTO - TYE",
-             "fl": 100, "tas": 140, "alternate": "DXXX"},
-        ]),
-        ("BÉNIN / DBBB ↔ DIAP via maritime (1.A)", [
+        # ────── Bénin (DBBB hub) ──────────────────────────────────────────
+        ("Bénin", "1.A — DBBB ↔ DIAP (maritime, évitement GH+TG)", [
             {"order": 1, "origin": "DBBB", "destination": "DIAP",
              "route_text": "TYE - EBUSO - ENKIT - ARABA - DCT - AD",
              "fl": 90, "tas": 140, "alternate": "DIYO"},
@@ -267,7 +252,7 @@ def seed_amazone_missions() -> int:
              "route_text": "AD - ARABA - ENKIT - EBUSO - TYE",
              "fl": 100, "tas": 140, "alternate": "DXXX"},
         ]),
-        ("BÉNIN / DBBB ↔ DIAP via Ghana+Togo (1.B)", [
+        ("Bénin", "1.B — DBBB ↔ DIAP (overflight GH+TG)", [
             {"order": 1, "origin": "DBBB", "destination": "DIAP",
              "route_text": "TYE - LM - ACC - TI - ONESI - AD",
              "fl": 90, "tas": 140, "alternate": "DIYO"},
@@ -275,7 +260,7 @@ def seed_amazone_missions() -> int:
              "route_text": "AD - ONESI - TI - ACC - LM - TYE",
              "fl": 100, "tas": 140, "alternate": "DXXX"},
         ]),
-        ("BÉNIN / DBBB ↔ DIAP techstop ACC (1.C)", [
+        ("Bénin", "1.C — DBBB ↔ DIAP (techstop Accra)", [
             {"order": 1, "origin": "DBBB", "destination": "DGAA",
              "route_text": "TYE - LM - ACC",
              "fl": 90, "tas": 140, "alternate": "DGTK"},
@@ -289,7 +274,7 @@ def seed_amazone_missions() -> int:
              "route_text": "ACC - LM - TYE",
              "fl": 100, "tas": 140, "alternate": "DXXX"},
         ]),
-        ("BÉNIN / DBBB ↔ FKYS (Yaoundé direct, 2.A)", [
+        ("Bénin", "2.A — DBBB ↔ FKYS Yaoundé (overflight Nigeria)", [
             {"order": 1, "origin": "DBBB", "destination": "FKYS",
              "route_text": "TYE - POLTO - LAG - R984 - POT - R984 - DLA - EDEBA - NLY",
              "fl": 90, "tas": 140, "alternate": "FKKD"},
@@ -297,7 +282,7 @@ def seed_amazone_missions() -> int:
              "route_text": "NLY - EDEBA - DLA - R984 - POT - R984 - LAG - POLTO - TYE",
              "fl": 100, "tas": 140, "alternate": "DXXX"},
         ]),
-        ("BÉNIN / DBBB ↔ FKYS techstop DNPO (2.B)", [
+        ("Bénin", "2.B — DBBB ↔ FKYS (techstop Port-Harcourt)", [
             {"order": 1, "origin": "DBBB", "destination": "DNPO",
              "route_text": "TYE - POLTO - LAG - R984 - POT",
              "fl": 90, "tas": 140, "alternate": "DNCA"},
@@ -311,7 +296,29 @@ def seed_amazone_missions() -> int:
              "route_text": "POT - R984 - LAG - POLTO - TYE",
              "fl": 100, "tas": 140, "alternate": "DXXX"},
         ]),
-        ("BÉNIN / TOUROU ↔ KAINJI", [
+        ("Bénin", "11.A — TOUROU ↔ DIAP (maritime)", [
+            {"order": 1, "origin": "TOUROU", "destination": "DIAP",
+             "route_text": "TOUROU - TYE - EBUSO - ENKIT - ARABA - DCT - AD",
+             "fl": 90, "tas": 140, "alternate": "DIYO"},
+            {"order": 2, "origin": "DIAP", "destination": "TOUROU",
+             "route_text": "AD - ARABA - ENKIT - EBUSO - TYE - TOUROU",
+             "fl": 100, "tas": 140, "alternate": "DBBB"},
+        ]),
+        ("Bénin", "11.B — TOUROU ↔ DIAP (techstop Accra)", [
+            {"order": 1, "origin": "TOUROU", "destination": "DGAA",
+             "route_text": "TOUROU - TYE - LM - ACC",
+             "fl": 90, "tas": 140, "alternate": "DGTK"},
+            {"order": 2, "origin": "DGAA", "destination": "DIAP",
+             "route_text": "ACC - TI - ONESI - AD",
+             "fl": 90, "tas": 140, "alternate": "DIYO"},
+            {"order": 3, "origin": "DIAP", "destination": "DGAA",
+             "route_text": "AD - ONESI - TI - ACC",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+            {"order": 4, "origin": "DGAA", "destination": "TOUROU",
+             "route_text": "ACC - LM - TYE - TOUROU",
+             "fl": 100, "tas": 140, "alternate": "DBBB"},
+        ]),
+        ("Bénin", "12 — TOUROU ↔ KAINJI", [
             {"order": 1, "origin": "TOUROU", "destination": "KAINJI",
              "route_text": "TOUROU - DCT - KAINJI",
              "fl": 90, "tas": 140, "alternate": "DNIL"},
@@ -319,16 +326,163 @@ def seed_amazone_missions() -> int:
              "route_text": "KAINJI - DCT - TOUROU",
              "fl": 100, "tas": 140, "alternate": "DBBB"},
         ]),
+        ("Bénin", "13 — DBBB ↔ DNAA (Abuja)", [
+            {"order": 1, "origin": "DBBB", "destination": "DNAA",
+             "route_text": "TYE - POLTO - LAG - R778 - KELIG - W951 - MESES - ABC",
+             "fl": 90, "tas": 140, "alternate": "DNKA"},
+            {"order": 2, "origin": "DNAA", "destination": "DBBB",
+             "route_text": "ABC - VONUK - H340 - LAG - POLTO - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        ("Bénin", "14 — DBBB ↔ DNMN (Minna)", [
+            {"order": 1, "origin": "DBBB", "destination": "DNMN",
+             "route_text": "TYE - POLTO - LAG - L433 - IBA - R778 - TEGDA - MNA",
+             "fl": 90, "tas": 140, "alternate": "DNAA"},
+            {"order": 2, "origin": "DNMN", "destination": "DBBB",
+             "route_text": "MNA - MAGIA - V377 - LAG - POLTO - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        ("Bénin", "15 — DBBB ↔ DNIL (Ilorin)", [
+            {"order": 1, "origin": "DBBB", "destination": "DNIL",
+             "route_text": "TYE - POLTO - LAG - L433 - IBA - ILR",
+             "fl": 90, "tas": 140, "alternate": "DNIB"},
+            {"order": 2, "origin": "DNIL", "destination": "DBBB",
+             "route_text": "ILR - USGUN - V377 - LAG - POLTO - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        # ────── Côte d'Ivoire (DIAP hub) ──────────────────────────────────
+        ("Côte d'Ivoire", "3.A — DIAP ↔ GUCY (évitement LR+SL)", [
+            {"order": 1, "origin": "DIAP", "destination": "GUCY",
+             "route_text": "AD - MAN - NZ - MA - J579 - KOLIP - A612 - ILGOT - CK",
+             "fl": 90, "tas": 140, "alternate": "GFLL"},
+            {"order": 2, "origin": "GUCY", "destination": "DIAP",
+             "route_text": "CK - A612 - ILGOT - KOLIP - J579 - MA - NZ - MAN - AD",
+             "fl": 100, "tas": 140, "alternate": "DIYO"},
+        ]),
+        ("Côte d'Ivoire", "3.B — DIAP ↔ GUCY (overflight LR+SL)", [
+            {"order": 1, "origin": "DIAP", "destination": "GUCY",
+             "route_text": "AD - V207 - LGI - BIREL - CK",
+             "fl": 90, "tas": 140, "alternate": "GFLL"},
+            {"order": 2, "origin": "GUCY", "destination": "DIAP",
+             "route_text": "CK - BIREL - LGI - V207 - AD",
+             "fl": 100, "tas": 140, "alternate": "DIYO"},
+        ]),
+        ("Côte d'Ivoire", "3.C — DIAP ↔ GUCY (techstop Monrovia)", [
+            {"order": 1, "origin": "DIAP", "destination": "GLRB",
+             "route_text": "AD - B600 - ROB",
+             "fl": 90, "tas": 140, "alternate": "GLMR"},
+            {"order": 2, "origin": "GLRB", "destination": "GUCY",
+             "route_text": "ROB - B614 - LGI - BIREL - CK",
+             "fl": 90, "tas": 140, "alternate": "GFLL"},
+            {"order": 3, "origin": "GUCY", "destination": "GLRB",
+             "route_text": "CK - BIREL - LGI - B614 - ROB",
+             "fl": 100, "tas": 140, "alternate": "GLMR"},
+            {"order": 4, "origin": "GLRB", "destination": "DIAP",
+             "route_text": "ROB - B600 - AD",
+             "fl": 100, "tas": 140, "alternate": "DIYO"},
+        ]),
+        ("Côte d'Ivoire", "8 — DIAP ↔ DIBK (Bouaké)", [
+            {"order": 1, "origin": "DIAP", "destination": "DIBK",
+             "route_text": "AD - DEGAS - BKY",
+             "fl": 90, "tas": 140, "alternate": "DIYO"},
+            {"order": 2, "origin": "DIBK", "destination": "DIAP",
+             "route_text": "BKY - DEGAS - AD",
+             "fl": 100, "tas": 140, "alternate": "DIYO"},
+        ]),
+        ("Côte d'Ivoire", "9 — DIAP ↔ DIKO (Korhogo)", [
+            {"order": 1, "origin": "DIAP", "destination": "DIKO",
+             "route_text": "AD - DEGAS - BKY - KRG",
+             "fl": 90, "tas": 140, "alternate": "DIYO"},
+            {"order": 2, "origin": "DIKO", "destination": "DIAP",
+             "route_text": "KRG - BKY - DEGAS - AD",
+             "fl": 100, "tas": 140, "alternate": "DIYO"},
+        ]),
+        # ────── Sénégal-Guinée (GUCY↔GOBD + GOBD↔GQNO) ────────────────────
+        ("Sénégal-Guinée", "4.A — GUCY ↔ GOBD (évitement GW+GM)", [
+            {"order": 1, "origin": "GUCY", "destination": "GOBD",
+             "route_text": "CK - H330 - SB - TD - A601 - DS",
+             "fl": 90, "tas": 140, "alternate": "GOOY"},
+            {"order": 2, "origin": "GOBD", "destination": "GUCY",
+             "route_text": "DS - A601 - TD - SB - H330 - CK",
+             "fl": 100, "tas": 140, "alternate": "GFLL"},
+        ]),
+        ("Sénégal-Guinée", "4.B — GUCY ↔ GOBD (overflight GW+GM)", [
+            {"order": 1, "origin": "GUCY", "destination": "GOBD",
+             "route_text": "CK - AXIRO - KIRTI - GULAV - ABBIS - POTOX - BJ - B600 - ANITI - DS",
+             "fl": 90, "tas": 140, "alternate": "GOOY"},
+            {"order": 2, "origin": "GOBD", "destination": "GUCY",
+             "route_text": "DS - ANITI - B600 - BJ - POTOX - ABBIS - GULAV - KIRTI - AXIRO - CK",
+             "fl": 100, "tas": 140, "alternate": "GFLL"},
+        ]),
+        ("Sénégal-Guinée", "4.C — GUCY ↔ GOBD (techstop Cap Skirring)", [
+            {"order": 1, "origin": "GUCY", "destination": "GOGS",
+             "route_text": "CK - AXIRO - KIRTI - GULAV - ABBIS - POTOX",
+             "fl": 90, "tas": 140, "alternate": "GOGG"},
+            {"order": 2, "origin": "GOGS", "destination": "GOBD",
+             "route_text": "GOGS - BJ - B600 - ANITI - DS",
+             "fl": 90, "tas": 140, "alternate": "GOOY"},
+            {"order": 3, "origin": "GOBD", "destination": "GOGS",
+             "route_text": "DS - ANITI - B600 - BJ - GOGS",
+             "fl": 100, "tas": 140, "alternate": "GOGG"},
+            {"order": 4, "origin": "GOGS", "destination": "GUCY",
+             "route_text": "GOGS - POTOX - ABBIS - GULAV - KIRTI - AXIRO - CK",
+             "fl": 100, "tas": 140, "alternate": "GFLL"},
+        ]),
+        ("Sénégal-Guinée", "7 — GOBD ↔ GQNO (Nouakchott)", [
+            {"order": 1, "origin": "GOBD", "destination": "GQNO",
+             "route_text": "DS - ANITI - R975 - NH",
+             "fl": 90, "tas": 140, "alternate": "GQPP"},
+            {"order": 2, "origin": "GQNO", "destination": "GOBD",
+             "route_text": "NH - R975 - ANITI - DS",
+             "fl": 100, "tas": 140, "alternate": "GOOY"},
+        ]),
+        # ────── Cameroun (FKYS hub) ───────────────────────────────────────
+        ("Cameroun", "5 — FKYS ↔ FOOL (Libreville)", [
+            {"order": 1, "origin": "FKYS", "destination": "FOOL",
+             "route_text": "NLY - H455 - LV",
+             "fl": 90, "tas": 140, "alternate": "FOOG"},
+            {"order": 2, "origin": "FOOL", "destination": "FKYS",
+             "route_text": "LV - H455 - NLY",
+             "fl": 100, "tas": 140, "alternate": "FKKD"},
+        ]),
+        ("Cameroun", "6 — FKYS ↔ FKKN (Ngaoundéré)", [
+            {"order": 1, "origin": "FKYS", "destination": "FKKN",
+             "route_text": "NLY - H455 - BIRIX - TJN",
+             "fl": 90, "tas": 140, "alternate": "FKKR"},
+            {"order": 2, "origin": "FKKN", "destination": "FKYS",
+             "route_text": "TJN - BIRIX - H455 - NLY",
+             "fl": 100, "tas": 140, "alternate": "FKKD"},
+        ]),
+        # ────── Mauritanie ────────────────────────────────────────────────
+        ("Mauritanie", "10 — GQNO ↔ GQND (Tidjikja)", [
+            {"order": 1, "origin": "GQNO", "destination": "GQND",
+             "route_text": "NH - TKA",
+             "fl": 90, "tas": 140, "alternate": "GQPA"},
+            {"order": 2, "origin": "GQND", "destination": "GQNO",
+             "route_text": "TKA - NH",
+             "fl": 100, "tas": 140, "alternate": "GOSS"},
+        ]),
     ]
+    # Nettoie les anciennes missions seedées avec un autre schéma
+    # (anciens noms type "BÉNIN / DBBB ↔ DNAA (Abuja)"). On supprime
+    # toutes les missions officielles puis re-insert avec le nouveau
+    # nommage "Dossier / N — origin ↔ destination (variante)".
+    try:
+        with db.connect() as c:
+            c.execute(
+                "DELETE FROM route_template "
+                "WHERE official = 1 AND variant = 'mission'"
+            )
+    except Exception:
+        pass
     n = 0
-    for name, legs in missions:
-        # Origine et destination du round-trip pour les colonnes
-        # canonical lookup
+    for dossier, name, legs in missions:
         first_origin = legs[0]["origin"]
         last_destination = legs[-1]["destination"]
+        full_name = f"{dossier} / {name}"
         db.upsert_canonical_route({
-            "name": name,
-            "category": "Bénin",
+            "name": full_name,
+            "category": dossier,
             "legs_json": json.dumps(legs, ensure_ascii=False),
             "origin_icao": first_origin,
             "destination_icao": last_destination,

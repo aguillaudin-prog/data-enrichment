@@ -41,9 +41,21 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
         # d'anciennes missions saved avec typo (ex: 'KELI' au lieu de
         # 'KELIG') continuent à empoisonner les routes chargées.
         _fix_known_route_typos()
-        if not force and hasattr(db, "count_official_routes"):
-            if db.count_official_routes() > 0:
-                return 0
+        if not force:
+            # Re-seed si manquant OU si schéma de missions changé.
+            # Le catalogue Amazone vise 23 missions (15 routes numérotées
+            # + variants). Si on en a moins, force le re-seed pour
+            # bénéficier de la dernière version.
+            try:
+                with db.connect() as c:
+                    n_missions = c.execute(
+                        "SELECT COUNT(*) FROM route_template "
+                        "WHERE official = 1 AND variant = 'mission'"
+                    ).fetchone()[0]
+                if n_missions >= 23 and hasattr(db, "count_official_routes") and db.count_official_routes() > 0:
+                    return 0  # schéma à jour, rien à faire
+            except Exception:
+                pass
         from app.seed_db import (
             seed_amazone_waypoints, seed_canonical_routes,
             seed_dhc6_perf_refinements, seed_amazone_missions,
@@ -1792,7 +1804,7 @@ if page_idx == 1:
             st.rerun()
     with lc3:
         valid = [l for l in st.session_state.legs if l.get("origin") and l.get("destination")]
-        if valid and st.button("💾 Enregistrer la route", help="Sauve cette route en base, accessible depuis la page Historique"):
+        if valid and st.button("📋 Placer cette route dans l'historique", help="Ajoute cette route à la page Historique pour pouvoir la recharger plus tard"):
             mission = st.session_state.get("mission") or {}
             operator = (mission.get("operator") or "").strip()
             origin_iso = _resolve_country_for_airport(valid[0]["origin"])
@@ -2287,7 +2299,18 @@ if page_idx == 4:
                 pass
         with c2:
             st.markdown("**Autorouter.aero**")
-            st.caption("Probe disponible via le bouton 🤖 Suggérer en page Legs.")
+            if st.button("🔍 Tester autorouter", key="admin_ar_test"):
+                from app import autorouter_client
+                ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
+                if not ar_cfg.is_configured():
+                    st.error("❌ Pas configuré (client_id / client_secret manquants dans secrets).")
+                else:
+                    try:
+                        info = autorouter_client.ping_version(ar_cfg)
+                        st.success(f"✅ OK · version `{info.get('version', '?')}`")
+                    except autorouter_client.AutorouterError as e:
+                        st.error(f"❌ KO : {e}")
+            st.caption("_(probe `/system/version` — pas de quota consommé)_")
 
     with st.expander("📥 Flotte type — import rapide", expanded=False):
         st.markdown(
