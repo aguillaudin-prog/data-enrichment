@@ -344,17 +344,14 @@ def _search_airports(query: str) -> list[tuple[str, str]]:
     return results
 
 
-def _apt_input(label: str, default: str, field_key: str) -> str:
-    """Champ ICAO unifié avec autocomplete inline (streamlit-searchbox).
+@st.fragment
+def _airport_searchbox_fragment(field_key: str, label: str, default: str) -> None:
+    """Searchbox dans un fragment Streamlit → les reruns du composant
+    React restent locaux et n'invalident pas le reste de la page. Sans
+    ce wrap, rerun_scope="fragment" lève StreamlitAPIException.
 
-    Le bug historique de focus-jump à la 1ère frappe vient du rerun
-    global Streamlit qui démonte/remonte le composant React. Solution :
-    `rerun_scope="fragment"` (dispo depuis streamlit-searchbox 0.1.22)
-    isole le rerun à un fragment local → React garde son focus.
-
-    Combiné avec `debounce=250ms` pour réduire la fréquence des appels
-    backend et `default_use_searchterm=True` pour que la liste apparaisse
-    dès la 1ère lettre tapée.
+    Le résultat est exposé via st.session_state[f"{field_key}_value"]
+    pour que le wrapper _apt_input (hors fragment) le récupère.
     """
     from streamlit_searchbox import st_searchbox
 
@@ -370,10 +367,11 @@ def _apt_input(label: str, default: str, field_key: str) -> str:
         default_use_searchterm=True,
     )
     if isinstance(selected, str) and selected.strip():
-        value = selected.strip().upper()
-    else:
-        value = (default or "").strip().upper()
+        st.session_state[f"{field_key}_value"] = selected.strip().upper()
 
+    # Caption rendue ici (à l'intérieur du fragment) pour qu'elle se
+    # mette à jour sur le rerun local sans attendre un rerun global.
+    value = st.session_state.get(f"{field_key}_value") or (default or "").strip().upper()
     if value:
         ap = db.find_airport(value)
         if ap:
@@ -381,7 +379,23 @@ def _apt_input(label: str, default: str, field_key: str) -> str:
             st.caption(f"✓ Sélectionné : **{value}** · {ap['name']}{country}")
         else:
             st.caption(f"✓ Sélectionné : **{value}** (inconnu en base)")
-    return value
+
+
+def _apt_input(label: str, default: str, field_key: str) -> str:
+    """Champ ICAO unifié avec autocomplete inline (streamlit-searchbox).
+
+    Le bug historique de focus-jump à la 1ère frappe vient du rerun
+    global Streamlit qui démonte/remonte le composant React. Solution :
+    le searchbox est rendu dans un @st.fragment (voir
+    _airport_searchbox_fragment) et configuré avec rerun_scope="fragment"
+    → les reruns restent locaux, React garde son focus.
+    """
+    # Init la valeur de session si pas encore renseignée — laisse le
+    # template (default) primer sur "rien" au premier render.
+    if f"{field_key}_value" not in st.session_state and default:
+        st.session_state[f"{field_key}_value"] = (default or "").strip().upper()
+    _airport_searchbox_fragment(field_key, label, default)
+    return (st.session_state.get(f"{field_key}_value") or "").strip().upper()
 
 
 def _run_dual_suggest(
