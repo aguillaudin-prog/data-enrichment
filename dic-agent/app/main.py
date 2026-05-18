@@ -27,19 +27,23 @@ st.set_page_config(
 )
 
 
-@st.cache_resource
-def _ensure_amazone_data_seeded() -> int:
-    """Seed des données opérateur Amazone au 1er démarrage Streamlit
-    (cache resource = une fois par process). Idempotent — ON CONFLICT
-    update sur chaque seed. Silencieux si fichier manque.
-
+def _ensure_amazone_data_seeded(force: bool = False) -> int:
+    """Seed des données opérateur Amazone. Idempotent — ON CONFLICT update.
     Couvre :
       - 3 waypoints maritimes custom (EBUSO, ENKIT, ARABA)
       - 56 routes catalogue DHC6 (airways + payload + temps de vol)
       - Affinage perf DHC6 (OEW TY-BAB 3813 kg)
+
+    Auto-rejoue si les routes officielles ont été supprimées (ex : user
+    a fait nettoyage trop large depuis page Historique). Détection via
+    count_official_routes() == 0.
     """
     n = 0
     try:
+        # Si les routes officielles ont disparu, re-seed obligatoire
+        if not force and hasattr(db, "count_official_routes"):
+            if db.count_official_routes() > 0:
+                return 0  # déjà OK, rien à faire
         from app.seed_db import (
             seed_amazone_waypoints, seed_canonical_routes,
             seed_dhc6_perf_refinements,
@@ -1651,7 +1655,12 @@ def _reset_to_blank_mission() -> None:
     _step_nav_footer()
 
 if page_idx == 1:
-    tpl_rows = db.list_route_templates()
+    # Routes user-saved uniquement (exclut le catalogue officiel Amazone
+    # qui est consommé via auto-apply sur la page Legs).
+    tpl_rows = db.list_user_templates() if hasattr(db, "list_user_templates") else [
+        r for r in db.list_route_templates()
+        if not (r.keys() and "official" in r.keys() and r["official"])
+    ]
     by_cat: dict[str, list] = {}
     for r in tpl_rows:
         cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
@@ -2114,10 +2123,12 @@ if page_idx == 2:
 
 if page_idx == 3:
     st.caption(
-        "Toutes les missions / routes enregistrées en base. Clique sur **Charger** "
-        "pour pré-remplir une mission avec les legs sauvegardés."
+        "Missions sauvegardées par toi (manuellement via 💾 Enregistrer ou "
+        "auto-save à la génération DIC). Le catalogue officiel Amazone (routes "
+        "DBBB→DNAA etc.) n'apparaît pas ici — il est consommé automatiquement "
+        "en page Legs quand origin+destination matchent."
     )
-    rows = db.list_route_templates()
+    rows = db.list_user_templates() if hasattr(db, "list_user_templates") else db.list_route_templates()
     if not rows:
         st.info("Aucune route en base. Génère une DIC ou clique 💾 Enregistrer "
                 "depuis la page Legs pour démarrer la bibliothèque.")

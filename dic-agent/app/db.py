@@ -533,8 +533,33 @@ def list_pocs() -> list[sqlite3.Row]:
 
 
 def list_route_templates() -> list[sqlite3.Row]:
+    """Toutes les routes en base (user-saved + officielles). Surtout utile
+    en debug — pour l'UI préférer list_user_templates() qui exclut le
+    catalogue opérateur officiel."""
     with connect() as c:
         return c.execute("SELECT * FROM route_template ORDER BY name").fetchall()
+
+
+def list_user_templates() -> list[sqlite3.Row]:
+    """Routes sauvegardées par l'utilisateur (official=0 ou NULL).
+    Exclut le catalogue opérateur officiel (Amazone, etc.) qui est
+    consommé via le mécanisme auto-apply sur la page Legs, pas via
+    le picker Mission."""
+    with connect() as c:
+        return c.execute(
+            "SELECT * FROM route_template "
+            "WHERE official IS NULL OR official = 0 "
+            "ORDER BY name"
+        ).fetchall()
+
+
+def count_official_routes() -> int:
+    """Compte les routes officielles (catalogue opérateur). 0 = besoin de
+    re-seed."""
+    with connect() as c:
+        return c.execute(
+            "SELECT COUNT(*) FROM route_template WHERE official = 1"
+        ).fetchone()[0]
 
 
 def find_alternate_candidates(
