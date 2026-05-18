@@ -197,7 +197,7 @@ def _astar_labeled(
                 cur = prev
             return list(reversed(path)), list(reversed(edges)), g[goal], explored
         for nbr, base_cost, awy in adj.get(cur, []):
-            cost = edge_cost_fn(cur, nbr, base_cost) if edge_cost_fn else base_cost
+            cost = edge_cost_fn(cur, nbr, base_cost, awy) if edge_cost_fn else base_cost
             tentative = g[cur] + cost
             if tentative < g.get(nbr, float("inf")):
                 came_from[nbr] = (cur, awy)
@@ -279,7 +279,7 @@ def _suggest_between_labeled_points(
     o_label: str, o_pt: tuple[float, float],
     d_label: str, d_pt: tuple[float, float],
     corridor_nm: float = 100.0,
-    k_neighbours: int = 8,
+    k_neighbours: int = 12,
     airspace_penalties: list[dict] | None = None,
     fl: int | None = None,
 ) -> SuggestedRoute:
@@ -287,6 +287,18 @@ def _suggest_between_labeled_points(
 
     Shared backend for `suggest_route` (airport-to-airport) and
     `suggest_with_procedures` (SID-exit-to-STAR-entry re-route).
+
+    Tunables :
+    - k_neighbours=12 (au lieu de 8) : connecte l'aéroport à plus de
+      waypoints airway, important en zone AFI où les airways sont
+      moins denses qu'en Europe.
+    - bbox airway adaptatif : pour les routes longues (> 500 NM),
+      on widen le bbox proportionnellement à la distance — sinon
+      des airways utiles sortent du corridor et l'A* manque de
+      candidats.
+    - DCT penalty léger (×1.10) dans edge_cost : préfère un airway
+      légèrement plus long à un DCT direct quand les deux existent,
+      pour produire des FPL "ATC-friendly" même si 2-3 NM en plus.
     """
     warnings: list[str] = []
 
@@ -299,26 +311,36 @@ def _suggest_between_labeled_points(
             except Exception:
                 continue
 
-    def _edge_cost(u: str, v: str, base: float, nodes: dict) -> float:
+    def _edge_cost(u: str, v: str, base: float, nodes: dict, awy: str = "") -> float:
+        # Pénalité légère sur les DCT pour préférer un airway équivalent.
+        # 1.10 = on accepte un airway jusqu'à 10 % plus long qu'un DCT
+        # direct — proportion raisonnable pour produire des FPL ATC-
+        # friendly sans pour autant détourner massivement la route.
+        cost = base * (1.10 if (not awy or awy == "DCT") else 1.0)
         if not geoms:
-            return base
+            return cost
         line = LineString([(nodes[u][1], nodes[u][0]), (nodes[v][1], nodes[v][0])])
-        mult = 1.0
         for g, m, flmin, flmax in geoms:
             if fl is not None and not (flmin <= fl <= flmax):
                 continue
             if line.intersects(g):
-                mult *= m
-        return base * mult
+                cost *= m
+        return cost
+
+    # Bbox airway adaptatif : pour les routes longues (> 500 NM) on
+    # widen proportionnellement à la distance origin/destination,
+    # plafonné à 400 NM (au-delà on aspire trop de bruit).
+    leg_dist_nm = _great_circle_nm(o_pt, d_pt)
+    bbox_margin = max(150, corridor_nm * 1.5, min(400, leg_dist_nm * 0.15))
 
     has_airways = db.count_airway_segments() > 0
     if has_airways:
-        nodes, adj = _build_airway_graph(o_pt, d_pt, bbox_margin_nm=max(150, corridor_nm * 1.5), fl=fl)
+        nodes, adj = _build_airway_graph(o_pt, d_pt, bbox_margin_nm=bbox_margin, fl=fl)
         _connect_airport_to_graph(o_label, o_pt, nodes, adj, k=k_neighbours)
         _connect_airport_to_graph(d_label, d_pt, nodes, adj, k=k_neighbours)
         path, edges, dist, explored = _astar_labeled(
             nodes, adj, o_label, d_label,
-            edge_cost_fn=lambda u, v, b: _edge_cost(u, v, b, nodes),
+            edge_cost_fn=lambda u, v, b, awy="": _edge_cost(u, v, b, nodes, awy),
         )
         strategy = "airway"
     else:
@@ -329,7 +351,7 @@ def _suggest_between_labeled_points(
         )
         path, edges, dist, explored = _astar_labeled(
             nodes, adj, o_label, d_label,
-            edge_cost_fn=lambda u, v, b: _edge_cost(u, v, b, nodes),
+            edge_cost_fn=lambda u, v, b, awy="": _edge_cost(u, v, b, nodes, awy),
         )
         strategy = "dct"
 
@@ -379,7 +401,7 @@ def suggest_route(
     origin_icao: str,
     destination_icao: str,
     corridor_nm: float = 100.0,
-    k_neighbours: int = 8,
+    k_neighbours: int = 12,
     airspace_penalties: list[dict] | None = None,
     fl: int | None = None,
 ) -> SuggestedRoute:
@@ -551,7 +573,7 @@ def suggest_with_procedures(
     fl: int | None = None,
     min_runway_ft: int | None = None,
     corridor_nm: float = 100.0,
-    k_neighbours: int = 8,
+    k_neighbours: int = 12,
     airspace_penalties: list[dict] | None = None,
     max_pairs: int = 25,
     proc_bonus_nm: float = 80.0,
