@@ -753,7 +753,9 @@ def _render_pre_dic_checklist(mission: dict, legs: list[dict]) -> bool:
             reds.append(f"{ltag} : EOBT manquant.")
             continue
         if eobt < now:
-            reds.append(f"{ltag} : EOBT dans le passé ({eobt:%Y-%m-%d %H:%MZ}).")
+            # Warning, pas bloquant : courant de générer une DIC en
+            # archive après-coup ou de re-générer avec EOBT pas re-saisie.
+            oranges.append(f"{ltag} : EOBT dans le passé ({eobt:%Y-%m-%d %H:%MZ}).")
         elif (eobt - now) < _dt.timedelta(hours=24):
             oranges.append(
                 f"{ltag} : EOBT < 24 h du présent — la plupart des pays "
@@ -1421,6 +1423,11 @@ if page_idx == 0:
         "callsign": f"{ap.get('callsign') or ap.get('registration','')} OR SUBSTITUTE".strip(),
         "n_crew": crew.get("n_crew", 2),
         "pilots": crew.get("pilots", ""),
+        # Champs séparés CDB/FO consommés par la validation pré-DIC et
+        # par les fonctions d'export (pack ZIP résumé, etc.) — `pilots`
+        # reste le texte concaténé pour l'item (17) du DIC.
+        "crew_cdb": crew.get("cdb", ""),
+        "crew_fo": crew.get("fo", ""),
         "purpose": purpose,
         # `alternates` is aggregated from per-leg entries at export time;
         # see export logic that joins legs[*].alternate with " / ".
