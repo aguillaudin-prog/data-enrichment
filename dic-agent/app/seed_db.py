@@ -221,6 +221,130 @@ def seed_countries() -> None:
     print(f"  countries: {n}")
 
 
+def seed_amazone_missions() -> int:
+    """Missions multi-leg pré-cablées du catalogue Amazone, surfaceées
+    dans le picker Mission de la page Legs (dossier Bénin).
+
+    Une mission = un round-trip ou un tour multi-legs cohérent, avec
+    EOBT pré-positionnés à 06:00Z J0 puis +2h par leg. L'OPS click sur
+    la mission → les N legs sont pré-remplis (origins, destinations,
+    routes, alternates, FL, TAS).
+
+    Distinct des entries `seed_canonical_routes()` qui sont des routes
+    unidirectionnelles consommées par l'auto-apply. Ces missions sont
+    consommées par _apply_template via le picker.
+    """
+    missions = [
+        ("BÉNIN / DBBB ↔ DNAA (Abuja)", [
+            {"order": 1, "origin": "DBBB", "destination": "DNAA",
+             "route_text": "TYE - POLTO - LAG - R778 - KELIG - W951 - MESES - ABC",
+             "fl": 90, "tas": 140, "alternate": "DNKA"},
+            {"order": 2, "origin": "DNAA", "destination": "DBBB",
+             "route_text": "ABC - VONUK - H340 - LAG - POLTO - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        ("BÉNIN / DBBB ↔ DNMN (Minna)", [
+            {"order": 1, "origin": "DBBB", "destination": "DNMN",
+             "route_text": "TYE - POLTO - LAG - L433 - IBA - R778 - TEGDA - MNA",
+             "fl": 90, "tas": 140, "alternate": "DNAA"},
+            {"order": 2, "origin": "DNMN", "destination": "DBBB",
+             "route_text": "MNA - MAGIA - V377 - LAG - POLTO - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        ("BÉNIN / DBBB ↔ DNIL (Ilorin)", [
+            {"order": 1, "origin": "DBBB", "destination": "DNIL",
+             "route_text": "TYE - POLTO - LAG - L433 - IBA - ILR",
+             "fl": 90, "tas": 140, "alternate": "DNIB"},
+            {"order": 2, "origin": "DNIL", "destination": "DBBB",
+             "route_text": "ILR - USGUN - V377 - LAG - POLTO - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        ("BÉNIN / DBBB ↔ DIAP via maritime (1.A)", [
+            {"order": 1, "origin": "DBBB", "destination": "DIAP",
+             "route_text": "TYE - EBUSO - ENKIT - ARABA - DCT - AD",
+             "fl": 90, "tas": 140, "alternate": "DIYO"},
+            {"order": 2, "origin": "DIAP", "destination": "DBBB",
+             "route_text": "AD - ARABA - ENKIT - EBUSO - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        ("BÉNIN / DBBB ↔ DIAP via Ghana+Togo (1.B)", [
+            {"order": 1, "origin": "DBBB", "destination": "DIAP",
+             "route_text": "TYE - LM - ACC - TI - ONESI - AD",
+             "fl": 90, "tas": 140, "alternate": "DIYO"},
+            {"order": 2, "origin": "DIAP", "destination": "DBBB",
+             "route_text": "AD - ONESI - TI - ACC - LM - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        ("BÉNIN / DBBB ↔ DIAP techstop ACC (1.C)", [
+            {"order": 1, "origin": "DBBB", "destination": "DGAA",
+             "route_text": "TYE - LM - ACC",
+             "fl": 90, "tas": 140, "alternate": "DGTK"},
+            {"order": 2, "origin": "DGAA", "destination": "DIAP",
+             "route_text": "ACC - TI - ONESI - AD",
+             "fl": 90, "tas": 140, "alternate": "DIYO"},
+            {"order": 3, "origin": "DIAP", "destination": "DGAA",
+             "route_text": "AD - ONESI - TI - ACC",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+            {"order": 4, "origin": "DGAA", "destination": "DBBB",
+             "route_text": "ACC - LM - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        ("BÉNIN / DBBB ↔ FKYS (Yaoundé direct, 2.A)", [
+            {"order": 1, "origin": "DBBB", "destination": "FKYS",
+             "route_text": "TYE - POLTO - LAG - R984 - POT - R984 - DLA - EDEBA - NLY",
+             "fl": 90, "tas": 140, "alternate": "FKKD"},
+            {"order": 2, "origin": "FKYS", "destination": "DBBB",
+             "route_text": "NLY - EDEBA - DLA - R984 - POT - R984 - LAG - POLTO - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        ("BÉNIN / DBBB ↔ FKYS techstop DNPO (2.B)", [
+            {"order": 1, "origin": "DBBB", "destination": "DNPO",
+             "route_text": "TYE - POLTO - LAG - R984 - POT",
+             "fl": 90, "tas": 140, "alternate": "DNCA"},
+            {"order": 2, "origin": "DNPO", "destination": "FKYS",
+             "route_text": "POT - R984 - DLA - EDEBA - NLY",
+             "fl": 90, "tas": 140, "alternate": "FKKD"},
+            {"order": 3, "origin": "FKYS", "destination": "DNPO",
+             "route_text": "NLY - EDEBA - DLA - R984 - POT",
+             "fl": 100, "tas": 140, "alternate": "DNEN"},
+            {"order": 4, "origin": "DNPO", "destination": "DBBB",
+             "route_text": "POT - R984 - LAG - POLTO - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        ("BÉNIN / TOUROU ↔ KAINJI", [
+            {"order": 1, "origin": "TOUROU", "destination": "KAINJI",
+             "route_text": "TOUROU - DCT - KAINJI",
+             "fl": 90, "tas": 140, "alternate": "DNIL"},
+            {"order": 2, "origin": "KAINJI", "destination": "TOUROU",
+             "route_text": "KAINJI - DCT - TOUROU",
+             "fl": 100, "tas": 140, "alternate": "DBBB"},
+        ]),
+    ]
+    n = 0
+    for name, legs in missions:
+        # Origine et destination du round-trip pour les colonnes
+        # canonical lookup
+        first_origin = legs[0]["origin"]
+        last_destination = legs[-1]["destination"]
+        db.upsert_canonical_route({
+            "name": name,
+            "category": "Bénin",
+            "legs_json": json.dumps(legs, ensure_ascii=False),
+            "origin_icao": first_origin,
+            "destination_icao": last_destination,
+            "distance_nm": None,
+            "payload_kg": None,
+            "flight_time_min": None,
+            "alternate": None,
+            "aircraft_type": "DHC6",
+            "variant": "mission",
+            "operator": "AMAZONE AIRLINES / DYNAMI AVIATION OPS",
+        })
+        n += 1
+    print(f"  amazone missions: {n}")
+    return n
+
+
 def seed_canonical_routes() -> int:
     """Catalogue de routes officielles opérateur (Amazone Airlines / DHC6-400),
     pré-calculées au TY-BAB OEW=3813kg, ISA+20, calm. Source : doc opérateur
@@ -348,6 +472,8 @@ def main() -> int:
     seed_amazone_waypoints()
     print("→ Canonical routes (Amazone)…")
     seed_canonical_routes()
+    print("→ Amazone missions (multi-leg)…")
+    seed_amazone_missions()
     print("→ DHC6 perf refinements…")
     seed_dhc6_perf_refinements()
     print("Done.")

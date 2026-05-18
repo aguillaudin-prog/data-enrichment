@@ -41,10 +41,11 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
                 return 0
         from app.seed_db import (
             seed_amazone_waypoints, seed_canonical_routes,
-            seed_dhc6_perf_refinements,
+            seed_dhc6_perf_refinements, seed_amazone_missions,
         )
         n += seed_amazone_waypoints()
         n += seed_canonical_routes()
+        n += seed_amazone_missions()
         seed_dhc6_perf_refinements()
     except Exception:
         pass
@@ -1650,16 +1651,27 @@ def _reset_to_blank_mission() -> None:
     _step_nav_footer()
 
 if page_idx == 1:
-    # Toutes les routes : user-saved + catalogue officiel. Permet à
-    # l'OPS de picker une mission catalogue (DBBB→DNAA Amazone) en 1
-    # click sans recréer from scratch. Catégorie normalisée pour grouper
-    # les routes officielles sous le bon dossier pays ("Bénin" plutôt
-    # que "AMAZONE — Bénin / DHC6 official" qui était long).
-    tpl_rows = db.list_route_templates()
+    # Picker Mission : on filtre pour ne montrer que des MISSIONS
+    # complètes (round-trips ou tours multi-legs), pas les 56 routes
+    # uni-directionnelles du catalogue qui sont consommées par
+    # l'auto-apply au niveau leg. Filtre = user-saved OU multi-leg
+    # officielle (>=2 legs).
+    tpl_rows_all = db.list_route_templates()
+    tpl_rows = []
+    for r in tpl_rows_all:
+        try:
+            legs = json.loads(r["legs_json"])
+            n_legs = len(legs) if isinstance(legs, list) else 0
+        except (json.JSONDecodeError, TypeError):
+            n_legs = 0
+        is_official = "official" in r.keys() and r["official"]
+        is_multi_leg = n_legs > 1
+        # On garde : user-saved (any leg count) OR officielle multi-leg
+        if not is_official or is_multi_leg:
+            tpl_rows.append(r)
     by_cat: dict[str, list] = {}
     for r in tpl_rows:
         raw_cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
-        # Normalise les catégories officielles vers leur dossier court
         if "AMAZONE" in raw_cat.upper() and "BÉNIN" in raw_cat.upper():
             cat = "Bénin"
         else:
