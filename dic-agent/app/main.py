@@ -1104,31 +1104,55 @@ def _leg_editor(idx: int, leg: dict) -> dict:
     eobt = dt.datetime.combine(d, t).replace(tzinfo=dt.timezone.utc)
 
     # Détection auto d'une route catalogue (opérateur officiel) pour ce
-    # couple O/D. Si match, on propose un bouton "📌 Route officielle"
-    # qui pré-remplit route_text + alternate + (info) payload, temps de
-    # vol, distance. Wrapped en try/except : si le helper db.* manque
-    # (déploiement partiel) ou le seed n'a pas tourné, on dégrade en
-    # silence sans casser le leg editor.
+    # couple O/D. La 1ère variante du catalogue (1.A, 13, etc.) est
+    # **appliquée automatiquement** dès que :
+    #   (a) origin + destination changent (= nouvelle paire vue), ou
+    #   (b) route_text est vide, ou
+    #   (c) route_text vaut exactement la dernière valeur auto-appliquée
+    #       (= l'OPS n'a pas modifié manuellement entre temps).
+    # Sinon, la saisie manuelle de l'OPS reste intacte. L'expander reste
+    # affiché pour permettre de switch entre variantes (1.A maritime vs
+    # 1.B overflight vs 1.C techstop).
     if origin and destination and hasattr(db, "find_canonical_routes"):
         try:
             canon_rows = db.find_canonical_routes(origin, destination, ac_type or None)
         except Exception:
             canon_rows = []
-        # Pending apply (depuis click d'un bouton du tour précédent)
+        # Apply explicite (bouton click au tour précédent)
         pending_canon = st.session_state.pop(f"{kprefix}_pending_canon", None)
         if pending_canon is not None:
             st.session_state[f"{kprefix}_route"] = pending_canon["route_text"]
             st.session_state[f"{kprefix}_alternate"] = pending_canon["alternate"] or ""
+            st.session_state[f"{kprefix}_last_auto_route"] = pending_canon["route_text"]
+        # Auto-apply de la 1ère variante quand approprié
+        if canon_rows:
+            best = canon_rows[0]
+            best_route = json.loads(best["legs_json"])[0]["route_text"]
+            best_alt = best["alternate"] or ""
+            last_pair_key = f"{kprefix}_last_canon_pair"
+            current_pair = f"{origin}|{destination}|{ac_type or ''}"
+            last_pair = st.session_state.get(last_pair_key)
+            last_auto = st.session_state.get(f"{kprefix}_last_auto_route", "")
+            cur_route = (st.session_state.get(f"{kprefix}_route", "") or "").strip()
+            pair_changed = (last_pair is not None and last_pair != current_pair)
+            owns_value = (not cur_route) or (cur_route == last_auto)
+            if pending_canon is None and (pair_changed or owns_value):
+                st.session_state[f"{kprefix}_route"] = best_route
+                st.session_state[f"{kprefix}_alternate"] = best_alt
+                st.session_state[f"{kprefix}_last_auto_route"] = best_route
+            st.session_state[last_pair_key] = current_pair
         if canon_rows:
             with st.expander(
                 f"📌 {len(canon_rows)} route(s) officielle(s) "
-                f"{origin}→{destination} ({canon_rows[0]['operator'] or '—'})",
-                expanded=True,
+                f"{origin}→{destination} ({canon_rows[0]['operator'] or '—'}) — "
+                f"1ère variante appliquée auto",
+                expanded=False,
             ):
                 st.caption(
                     "⚠️ **Routes mandatoires** côté opérateur. "
                     "Perfs calibrées **ISA+20°C, still air, OEW DHC6-400 "
-                    "TY-BAB 3813 kg** — pas de marge head/tailwind."
+                    "TY-BAB 3813 kg** — pas de marge head/tailwind. "
+                    "Click sur une autre variante pour la switch."
                 )
                 for r in canon_rows:
                     cols = st.columns([3, 1, 1, 1, 1])
