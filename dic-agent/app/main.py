@@ -36,6 +36,11 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
         # Force la migration de schéma (ALTER TABLE pour les colonnes
         # ajoutées, dont `official` qui peut manquer sur DB historique).
         db.init_schema()
+        # Fix des typos connus dans les templates sauvegardés. Idempotent
+        # (UPDATE ... WHERE LIKE est no-op si pas de match). Évite que
+        # d'anciennes missions saved avec typo (ex: 'KELI' au lieu de
+        # 'KELIG') continuent à empoisonner les routes chargées.
+        _fix_known_route_typos()
         if not force and hasattr(db, "count_official_routes"):
             if db.count_official_routes() > 0:
                 return 0
@@ -50,6 +55,38 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
     except Exception:
         pass
     return n
+
+
+def _fix_known_route_typos() -> int:
+    """Corrige les typos connus dans route_template.legs_json. Liste à
+    étendre quand on en croise d'autres. Idempotent.
+
+    Cas réels rencontrés :
+    - 'KELI ' au lieu de 'KELIG ' (le G final droppé à la saisie)
+    - 'KELI"' au lieu de 'KELIG"' (en fin de string JSON)
+    """
+    fixes = [
+        (" KELI ", " KELIG "),
+        ('"KELI"', '"KELIG"'),
+        (" KELI,", " KELIG,"),
+        (" KELI-", " KELIG-"),
+        ("-KELI ", "-KELIG "),
+        ("-KELI-", "-KELIG-"),
+        ('KELI W951', 'KELIG W951'),
+    ]
+    n_fixed = 0
+    try:
+        with db.connect() as c:
+            for old, new in fixes:
+                cur = c.execute(
+                    "UPDATE route_template SET legs_json = REPLACE(legs_json, ?, ?) "
+                    "WHERE legs_json LIKE ?",
+                    (old, new, f"%{old}%"),
+                )
+                n_fixed += cur.rowcount
+    except Exception:
+        pass
+    return n_fixed
 
 
 _ensure_amazone_data_seeded()
