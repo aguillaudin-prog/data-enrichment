@@ -282,6 +282,55 @@ def seed_canonical_routes() -> int:
     return n
 
 
+def seed_amazone_waypoints() -> int:
+    """3 fixes maritimes custom Amazone (EBUSO, ENKIT, ARABA) utilisés sur
+    les routes 1.A et 11.A (évitement Ghana & Togo en trajet maritime).
+    Coordonnées extraites du doc opérateur — non publiés OurAirports.
+    Idempotent (PRIMARY KEY ident+region)."""
+    csv_path = SEEDS_DIR / "amazone_waypoints.csv"
+    if not csv_path.exists():
+        print("  amazone_waypoints.csv missing — skipped")
+        return 0
+    import csv as _csv
+    rows = []
+    with csv_path.open(encoding="utf-8") as f:
+        reader = _csv.DictReader(f)
+        for r in reader:
+            try:
+                rows.append({
+                    "ident": r["ident"].strip().upper(),
+                    "region": r["region"].strip().upper() or None,
+                    "lat": float(r["lat"]),
+                    "lon": float(r["lon"]),
+                    "kind": r.get("kind", "WPT") or "WPT",
+                    "user_added": int(r.get("user_added", 1) or 1),
+                })
+            except (KeyError, ValueError):
+                continue
+    n = db.upsert_waypoints(rows) if rows else 0
+    print(f"  amazone waypoints: {n}")
+    return n
+
+
+def seed_dhc6_perf_refinements() -> None:
+    """Affine la fiche aircraft_type du DHC6 avec les valeurs Amazone
+    précises (OEW 3813 kg / 8406 lbs, ISA+20 still air conditions).
+    On préserve les autres champs, on enrichit juste le full_name pour
+    que l'OPS voie d'où viennent les chiffres dans les calculs."""
+    with db.connect() as c:
+        cur = c.execute("SELECT * FROM aircraft_type WHERE icao_designator = 'DHC6'")
+        row = cur.fetchone()
+        if not row:
+            return
+        new_name = "De Havilland Canada DHC-6-400 Twin Otter (TY-BAB, OEW 3813 kg)"
+        if (row["full_name"] or "") != new_name:
+            c.execute(
+                "UPDATE aircraft_type SET full_name = ? WHERE icao_designator = 'DHC6'",
+                (new_name,),
+            )
+            print(f"  DHC6 perf refined → {new_name}")
+
+
 def main() -> int:
     print("→ Init schema…")
     db.init_schema()
@@ -295,8 +344,12 @@ def main() -> int:
     seed_runways()
     print("→ Countries…")
     seed_countries()
+    print("→ Amazone maritime waypoints…")
+    seed_amazone_waypoints()
     print("→ Canonical routes (Amazone)…")
     seed_canonical_routes()
+    print("→ DHC6 perf refinements…")
+    seed_dhc6_perf_refinements()
     print("Done.")
     return 0
 

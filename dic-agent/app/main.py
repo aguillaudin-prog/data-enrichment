@@ -28,19 +28,31 @@ st.set_page_config(
 
 
 @st.cache_resource
-def _ensure_canonical_routes_seeded() -> int:
-    """Seed du catalogue Amazone DHC6 au 1er démarrage Streamlit (cache
-    resource = exécuté une fois par process, pas par session). Idempotent
-    grâce à l'ON CONFLICT du upsert. Silencieux si le CSV manque ou DB
-    indisponible — ne bloque pas le boot de l'app."""
+def _ensure_amazone_data_seeded() -> int:
+    """Seed des données opérateur Amazone au 1er démarrage Streamlit
+    (cache resource = une fois par process). Idempotent — ON CONFLICT
+    update sur chaque seed. Silencieux si fichier manque.
+
+    Couvre :
+      - 3 waypoints maritimes custom (EBUSO, ENKIT, ARABA)
+      - 56 routes catalogue DHC6 (airways + payload + temps de vol)
+      - Affinage perf DHC6 (OEW TY-BAB 3813 kg)
+    """
+    n = 0
     try:
-        from app.seed_db import seed_canonical_routes
-        return seed_canonical_routes()
+        from app.seed_db import (
+            seed_amazone_waypoints, seed_canonical_routes,
+            seed_dhc6_perf_refinements,
+        )
+        n += seed_amazone_waypoints()
+        n += seed_canonical_routes()
+        seed_dhc6_perf_refinements()
     except Exception:
-        return 0
+        pass
+    return n
 
 
-_ensure_canonical_routes_seeded()
+_ensure_amazone_data_seeded()
 
 
 def _show_logged_in_user() -> None:
@@ -1018,6 +1030,11 @@ def _leg_editor(idx: int, leg: dict) -> dict:
                 f"{origin}→{destination} ({canon_rows[0]['operator'] or '—'})",
                 expanded=True,
             ):
+                st.caption(
+                    "⚠️ **Routes mandatoires** côté opérateur. "
+                    "Perfs calibrées **ISA+20°C, still air, OEW DHC6-400 "
+                    "TY-BAB 3813 kg** — pas de marge head/tailwind."
+                )
                 for r in canon_rows:
                     cols = st.columns([3, 1, 1, 1, 1])
                     with cols[0]:
