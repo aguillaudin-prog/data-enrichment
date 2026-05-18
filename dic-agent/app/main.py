@@ -2378,7 +2378,7 @@ if page_idx == 4:
     # Statut des APIs externes — un coup d'œil rapide pour savoir si
     # quelque chose est cassé côté upstream.
     with st.expander("🌐 Statut APIs externes", expanded=False):
-        c1, c2 = st.columns(2)
+        c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown("**Open-Meteo (vent aloft)**")
             if st.button("🔍 Tester Open-Meteo", key="admin_om_test"):
@@ -2439,6 +2439,23 @@ if page_idx == 4:
                             st.error(f"❌ Token KO : {e}")
                     except autorouter_client.AutorouterError as e:
                         st.error(f"❌ Version probe KO : {e}")
+        with c3:
+            st.markdown("**OpenAIP** _(airspaces P/R/D)_")
+            if st.button("🔍 Tester OpenAIP", key="admin_oa_test"):
+                try:
+                    from app import openaip_client
+                    hc = openaip_client.health_check()
+                    if hc["ok"]:
+                        st.success(f"✅ OK ({hc['latency_ms']} ms)")
+                    else:
+                        st.error(f"❌ KO : {hc['error']}")
+                except Exception as e:
+                    st.error(f"❌ Module : {e}")
+            st.caption(
+                "_(pénalise les zones militaires dans le route suggester. "
+                "Sans clé `OPENAIP_API_KEY` les routes restent calculées, "
+                "juste sans cette pénalisation.)_"
+            )
 
     with st.expander("📥 Flotte type — import rapide", expanded=False):
         st.markdown(

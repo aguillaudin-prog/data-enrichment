@@ -87,6 +87,29 @@ def _paginate(endpoint: str, params: dict, page_size: int = 1000) -> Iterable[di
         total_pages = data.get("totalPages") or 1
         if page >= total_pages or not items:
             break
+
+
+def health_check() -> dict:
+    """Probe OpenAIP avec une requête minimale (1 airspace FR).
+    Retourne {ok, latency_ms, error}. Distingue les cas :
+    - key missing → error 'OPENAIP_API_KEY missing'
+    - key invalid → error 'HTTP 401'
+    - API down → error 'network: ...'
+    - quota dépassé → error 'HTTP 429'
+    """
+    import time as _time
+    t0 = _time.time()
+    try:
+        _api_key()  # raise si manquant
+    except OpenAIPError as e:
+        return {"ok": False, "latency_ms": 0, "error": str(e)}
+    try:
+        _get("airspaces", {"country": "FR", "limit": 1, "page": 1})
+        return {"ok": True, "latency_ms": int((_time.time() - t0) * 1000), "error": None}
+    except OpenAIPError as e:
+        return {"ok": False, "latency_ms": int((_time.time() - t0) * 1000), "error": str(e)}
+    except requests.exceptions.RequestException as e:
+        return {"ok": False, "latency_ms": int((_time.time() - t0) * 1000), "error": f"network: {e}"}
         page += 1
 
 
