@@ -1103,8 +1103,11 @@ def _render_insert_after_leg(leg_idx: int, leg: dict) -> None:
     dest = (leg.get("destination") or "").strip().upper()
     if not dest:
         return
-    # Cherche les missions Amazone dont le 1er leg part de `dest`.
-    matching = []
+    # Cherche tous les legs des missions Amazone qui partent de `dest`,
+    # pas uniquement le 1er leg. Ex : si current dest = GUCY, on doit
+    # proposer aussi le leg 2 de mission "3.A — DIAP ↔ GUCY" qui est
+    # GUCY → DIAP (le retour, partant de GUCY).
+    matching: list[tuple[str, dict, int, int]] = []  # (name, leg_dict, leg_idx, n_legs)
     try:
         with db.connect() as c:
             cols = {r[1] for r in c.execute("PRAGMA table_info(route_template)").fetchall()}
@@ -1117,18 +1120,20 @@ def _render_insert_after_leg(leg_idx: int, leg: dict) -> None:
         for r in rows:
             try:
                 rlegs = json.loads(r["legs_json"])
-                if rlegs and (rlegs[0].get("origin") or "").strip().upper() == dest:
-                    matching.append((r["name"], rlegs))
             except (json.JSONDecodeError, TypeError):
                 continue
+            if not isinstance(rlegs, list):
+                continue
+            for sub_idx, sub_leg in enumerate(rlegs):
+                if (sub_leg.get("origin") or "").strip().upper() == dest:
+                    matching.append((r["name"], sub_leg, sub_idx, len(rlegs)))
     except Exception:
         return
     label = (
         f"➕ Insérer un leg après celui-ci"
-        + (f" · {len(matching)} mission(s) Amazone partent de {dest}" if matching else "")
+        + (f" · {len(matching)} suggestion(s) Amazone depuis {dest}" if matching else "")
     )
     with st.expander(label, expanded=False):
-        # Option 1 : leg vide
         if st.button(
             "⬜ Leg vide", key=f"ins_blank_{leg_idx}_{_legs_sid()}",
             help="Insère un leg vide à pré-remplir manuellement",
@@ -1139,24 +1144,30 @@ def _render_insert_after_leg(leg_idx: int, leg: dict) -> None:
                           "tas": 140, "route_text": ""}],
             }
             st.rerun()
-        # Option 2..N : missions Amazone partant de `dest`
-        for name, rlegs in matching:
-            first_leg = rlegs[0]
+        for name, sub_leg, sub_idx, n_legs in matching:
+            # Label : "3.A leg 2/2 · GUCY → DIAP"
+            short_name = name.split(" / ", 1)[-1] if " / " in name else name
             label_btn = (
-                f"📌 {name} · {first_leg['origin']} → {first_leg['destination']}"
+                f"📌 {short_name} leg {sub_idx + 1}/{n_legs} · "
+                f"{sub_leg['origin']} → {sub_leg['destination']}"
             )
             if st.button(
-                label_btn, key=f"ins_mis_{leg_idx}_{name}_{_legs_sid()}",
-                help=f"Insère uniquement le 1er leg de cette mission ({first_leg['origin']} → {first_leg['destination']})",
+                label_btn, key=f"ins_mis_{leg_idx}_{name}_{sub_idx}_{_legs_sid()}",
+                help=(
+                    f"Insère ce leg de la mission. "
+                    f"Route : {sub_leg.get('route_text', '?')}. "
+                    f"Alt : {sub_leg.get('alternate', '?')}."
+                ),
             ):
                 st.session_state["_pending_insert_leg"] = {
                     "after": leg_idx,
                     "legs": [{
-                        "origin": first_leg["origin"],
-                        "destination": first_leg["destination"],
-                        "fl": first_leg.get("fl", 90),
-                        "tas": first_leg.get("tas", 140),
-                        "route_text": first_leg.get("route_text", ""),
+                        "origin": sub_leg["origin"],
+                        "destination": sub_leg["destination"],
+                        "fl": sub_leg.get("fl", 90),
+                        "tas": sub_leg.get("tas", 140),
+                        "route_text": sub_leg.get("route_text", ""),
+                        "alternate": sub_leg.get("alternate", ""),
                     }],
                 }
                 st.rerun()
@@ -1171,7 +1182,12 @@ def _leg_editor(idx: int, leg: dict) -> dict:
     if pending_route is not None:
         st.session_state[f"{kprefix}_route"] = pending_route
 
-    st.markdown(f"### Leg {idx + 1}")
+    # Header dynamique : "Leg N — DBBB → DIAP" avec la destination
+    # courante visible direct. Si pas encore saisies, on garde un
+    # placeholder discret pour ne pas casser la lisibilité.
+    cur_orig = (leg.get("origin") or "").strip().upper() or "—"
+    cur_dest = (leg.get("destination") or "").strip().upper() or "—"
+    st.markdown(f"### Leg {idx + 1}  ·  **{cur_orig} → {cur_dest}**")
     c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
     with c1:
         origin = _apt_input("Origin (ICAO)", leg.get("origin", ""), f"{kprefix}_orig")
@@ -1868,15 +1884,15 @@ if page_idx == 1:
     if pending_insert is not None:
         idx_after = pending_insert["after"]
         new_legs = pending_insert["legs"]
-        # Insère les nouveaux legs juste après idx_after (= insert at idx_after+1)
         st.session_state.legs[idx_after + 1:idx_after + 1] = new_legs
-        _bump_legs_sid()  # force fresh widget keys pour les legs déplacés
+        _bump_legs_sid()
 
     for i, leg in enumerate(st.session_state.legs):
-        st.session_state.legs[i] = _leg_editor(i, leg)
-        # Bouton insertion après chaque leg — petit, discret. Click →
-        # ouvre un sub-menu avec "leg vide" + suggestions Amazone qui
-        # partent de la destination du leg courant.
+        # Chaque leg dans un container bordé → séparation visuelle
+        # nette entre legs, lecture beaucoup plus claire qu'un flat
+        # markdown ### Leg N suivi d'un mur d'inputs.
+        with st.container(border=True):
+            st.session_state.legs[i] = _leg_editor(i, leg)
         _render_insert_after_leg(i, leg)
 
     # Inline +/− leg controls at the bottom — concise, no header noise.
