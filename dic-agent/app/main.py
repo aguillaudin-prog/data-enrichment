@@ -1115,6 +1115,10 @@ def _leg_editor(idx: int, leg: dict) -> dict:
     suggested_alt = leg.get("alternate", "")
     if not suggested_alt and destination:
         suggested_alt = db.default_alternate_for(destination) or ""
+    # Pending apply depuis le tour précédent (click sur un bouton suggestion)
+    pending_alt = st.session_state.pop(f"{kprefix}_pending_alt", None)
+    if pending_alt is not None:
+        st.session_state[f"{kprefix}_alternate"] = pending_alt
     alternate = st.text_input(
         f"Alternate de {destination or 'destination'} (ICAO)",
         value=suggested_alt,
@@ -1125,6 +1129,40 @@ def _leg_editor(idx: int, leg: dict) -> dict:
             "cette destination dans les missions sauvegardées."
         ),
     ).strip().upper()
+
+    # 📍 Alternates auto-suggérés (top 5 aéros IFR proches, filtrés par perf
+    # min_runway de l'appareil). Affiché en boutons cliquables seulement si
+    # destination saisie et hasattr db.find_alternate_candidates (déploiement
+    # partiel safe).
+    if destination and hasattr(db, "find_alternate_candidates"):
+        try:
+            min_rwy = int(ac_perf["min_runway_ft"]) if (ac_perf and ac_perf["min_runway_ft"]) else None
+            alt_candidates = db.find_alternate_candidates(
+                destination, min_runway_ft=min_rwy, max_distance_nm=250, limit=5,
+            )
+        except Exception:
+            alt_candidates = []
+        if alt_candidates:
+            st.caption(
+                f"📍 **{len(alt_candidates)} alternate(s) suggéré(s)** "
+                f"pour {destination} dans 250 NM, perf {ac_type or 'aéronef'} OK :"
+            )
+            cols = st.columns(min(len(alt_candidates), 5))
+            for i, ap in enumerate(alt_candidates):
+                with cols[i]:
+                    dist_nm = db._haversine_nm(
+                        float(db.find_airport(destination)["lat"]),
+                        float(db.find_airport(destination)["lon"]),
+                        float(ap["lat"]), float(ap["lon"]),
+                    )
+                    label = f"{ap['icao']}\n{ap['name'][:18]}\n{dist_nm:.0f} NM"
+                    if st.button(
+                        label, key=f"{kprefix}_alt_{ap['icao']}",
+                        help=f"{ap['name']} — rwy max {ap['max_runway_ft'] or '?'} ft",
+                        width="stretch",
+                    ):
+                        st.session_state[f"{kprefix}_pending_alt"] = ap["icao"]
+                        st.rerun()
 
     msg = st.session_state.pop(f"_pending_suggest_msg_{sid}_{idx}", None)
     if msg:

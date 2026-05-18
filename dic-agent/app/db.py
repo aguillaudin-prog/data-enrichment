@@ -537,6 +537,79 @@ def list_route_templates() -> list[sqlite3.Row]:
         return c.execute("SELECT * FROM route_template ORDER BY name").fetchall()
 
 
+def find_alternate_candidates(
+    destination_icao: str,
+    min_runway_ft: int | None = None,
+    max_distance_nm: float = 200.0,
+    limit: int = 5,
+) -> list[sqlite3.Row]:
+    """Aéros candidats comme alternate pour `destination_icao`.
+
+    Critères :
+    - À max `max_distance_nm` NM de la destination (great-circle).
+    - Si `min_runway_ft` donné, exclut les aéros dont aucune piste ne
+      satisfait. Aéros sans piste référencée en DB sont gardés (donnée
+      manquante n'est pas un disqualifiant absolu).
+    - Pas la destination elle-même.
+    - A des procédures publiées en base (proxy pour "vrai aéro IFR") —
+      sinon les milliers de pistes herbe d'OurAirports remontent.
+    - Tri : même pays que destination en premier, puis par distance.
+    """
+    dest = find_airport(destination_icao)
+    if not dest:
+        return []
+    dest_lat, dest_lon = float(dest["lat"]), float(dest["lon"])
+    dest_iso = dest["country_iso"]
+    # Bbox d'approximation : 1° ~ 60 NM → ±max_distance_nm/60 degrés
+    import math
+    lat_margin = max_distance_nm / 60
+    cos_lat = math.cos(math.radians(dest_lat))
+    lon_margin = max_distance_nm / 60 / max(cos_lat, 0.1)
+    with connect() as c:
+        # On JOIN procedure pour ne garder que les aéros IFR réels
+        rows = c.execute(
+            """
+            SELECT a.*,
+                   COALESCE(MAX(r.length_ft), 0) AS max_runway_ft
+            FROM airport a
+            LEFT JOIN runway r ON r.airport_icao = a.icao
+            WHERE a.icao != ?
+              AND a.lat BETWEEN ? AND ?
+              AND a.lon BETWEEN ? AND ?
+              AND EXISTS (SELECT 1 FROM procedure p WHERE p.airport_icao = a.icao)
+            GROUP BY a.icao
+            """,
+            (
+                destination_icao.upper(),
+                dest_lat - lat_margin, dest_lat + lat_margin,
+                dest_lon - lon_margin, dest_lon + lon_margin,
+            ),
+        ).fetchall()
+    # Filtre distance réelle + perf runway en Python
+    candidates = []
+    for r in rows:
+        d_nm = _haversine_nm(dest_lat, dest_lon, float(r["lat"]), float(r["lon"]))
+        if d_nm > max_distance_nm:
+            continue
+        if min_runway_ft and r["max_runway_ft"] and r["max_runway_ft"] < min_runway_ft:
+            continue
+        candidates.append((r, d_nm))
+    # Tri : même pays d'abord, puis distance
+    candidates.sort(key=lambda x: (x[0]["country_iso"] != dest_iso, x[1]))
+    return [r for r, _ in candidates[:limit]]
+
+
+def _haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Distance grand-cercle en NM (formule de haversine)."""
+    import math
+    R_NM = 3440.065  # Rayon Terre en NM
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return 2 * R_NM * math.asin(math.sqrt(a))
+
+
 def find_canonical_routes(origin: str, destination: str, aircraft_type: str | None = None) -> list[sqlite3.Row]:
     """Routes catalogue (official=1) matching this origin → destination.
 
