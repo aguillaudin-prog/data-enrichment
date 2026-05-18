@@ -87,6 +87,16 @@ def _operator_picker(key_prefix: str) -> str | None:
     return sel
 
 
+def _op_slug(operator: str | None) -> str:
+    """Slug compact ASCII pour bricoler des keys Streamlit stables.
+    Ex : 'AMAZONE AIRLINES / DYNAMI OPS' → 'AMAZONEAIRLINESDYNAMIOPS'.
+    Permet de rendre les selectbox keys dépendantes de l'operator courant
+    pour que Streamlit recrée un widget vierge à chaque changement de
+    compagnie (pop session_state ne suffit pas, le display value est
+    indépendamment caché côté React)."""
+    return "".join(c for c in (operator or "_none_").upper() if c.isalnum()) or "_none_"
+
+
 def _aircraft_picker(key_prefix: str, operator: str | None = None) -> dict:
     rows = db.list_aircraft(operator=operator)
     aircraft_options = [
@@ -94,15 +104,12 @@ def _aircraft_picker(key_prefix: str, operator: str | None = None) -> dict:
     ]
     options = aircraft_options + ["— nouveau —"]
     label = f"Appareil ({operator})" if operator else "Appareil"
-    # Default to the first real aircraft when the operator has any. The old
-    # default '— nouveau —' silently left registration/type/callsign empty
-    # in the generated DIC if the user didn't actively pick one (the bug
-    # the user spotted: '(12) 01' / '(13) empty' / '(15) OR SUBSTITUTE').
     if rows:
         default_idx = 0
     else:
         default_idx = 0  # only '— nouveau —' available
-    sel = st.selectbox(label, options, index=default_idx, key=f"{key_prefix}_ap_sel")
+    sel = st.selectbox(label, options, index=default_idx,
+                       key=f"{key_prefix}_ap_sel_{_op_slug(operator)}")
     if sel != "— nouveau —":
         idx = options.index(sel)
         r = rows[idx]
@@ -163,19 +170,22 @@ def _crew_picker(key_prefix: str, operator: str | None = None) -> dict:
     cdb_label_to_name = {f"{p['rank'] or ''} {p['name']}".strip(): p["name"] for p in cdbs}
     fo_label_to_name = {f"{p['rank'] or ''} {p['name']}".strip(): p["name"] for p in fos}
 
+    op_slug = _op_slug(operator)
     c1, c2, c3 = st.columns([2, 2, 1])
     with c1:
-        sel_cdb = st.selectbox("Commandant de bord (CDB)", cdb_options, key=f"{key_prefix}_cdb_sel")
+        sel_cdb = st.selectbox("Commandant de bord (CDB)", cdb_options,
+                               key=f"{key_prefix}_cdb_sel_{op_slug}")
         if sel_cdb == "— autre —":
-            cdb_text = st.text_input("CDB (saisie libre)", key=f"{key_prefix}_cdb_text").strip()
+            cdb_text = st.text_input("CDB (saisie libre)",
+                                     key=f"{key_prefix}_cdb_text_{op_slug}").strip()
         else:
-            # Strip rank from the display label — the reference DICs use just
-            # 'Aditya Tri Hertiawan' in (17), not 'CPT Aditya Tri Hertiawan'.
             cdb_text = cdb_label_to_name.get(sel_cdb, sel_cdb)
     with c2:
-        sel_fo = st.selectbox("Copilote (FO)", fo_options, key=f"{key_prefix}_fo_sel")
+        sel_fo = st.selectbox("Copilote (FO)", fo_options,
+                              key=f"{key_prefix}_fo_sel_{op_slug}")
         if sel_fo == "— autre —":
-            fo_text = st.text_input("FO (saisie libre)", key=f"{key_prefix}_fo_text").strip()
+            fo_text = st.text_input("FO (saisie libre)",
+                                    key=f"{key_prefix}_fo_text_{op_slug}").strip()
         elif sel_fo == "— aucun —":
             fo_text = ""
         else:
@@ -217,21 +227,26 @@ def _crew_picker(key_prefix: str, operator: str | None = None) -> dict:
     }
 
 
-def _poc_picker(key_prefix: str) -> dict:
+def _poc_picker(key_prefix: str, operator: str | None = None) -> dict:
     """POC = Point Of Contact. Pick an existing one from the dropdown,
     or use the '➕ Ajouter un POC' expander below to create a new one
     that becomes available everywhere afterwards.
 
     Only 3 fields are surfaced (name including rank, email fonctionnel,
     phone) — the legacy email_personal / fax columns stay in the schema
-    for backward compatibility but aren't exposed."""
+    for backward compatibility but aren't exposed.
+
+    The `operator` param only affects the selectbox key so the widget
+    re-renders fresh when the user switches compagnie (visuel cohérent
+    avec aircraft/crew pickers, même si POC est en réalité global)."""
+    op_slug = _op_slug(operator)
     rows = db.list_pocs()
     if not rows:
         st.info("Aucun POC en base. Crée-en un via l'expander ci-dessous.")
         chosen = None
     else:
         labels = [f"{r['rank'] or ''} {r['name']}".strip() for r in rows]
-        sel = st.selectbox("Profil POC", labels, key=f"{key_prefix}_poc_sel")
+        sel = st.selectbox("Profil POC", labels, key=f"{key_prefix}_poc_sel_{op_slug}")
         chosen = rows[labels.index(sel)] if sel else None
 
     with st.expander("➕ Ajouter un POC en base"):
@@ -1276,20 +1291,11 @@ if page_idx == 0:
     st.divider()
     st.subheader("Compagnie")
     selected_operator = _operator_picker("mission")
-    # Reset des sélecteurs dépendants quand on change de compagnie : sans
-    # ça, Streamlit garde l'aircraft / crew / POC du précédent opérateur
-    # même s'ils n'appartiennent plus à la nouvelle compagnie (selectbox
-    # value est sticky via session_state.key).
-    prev_op = st.session_state.get("_prev_mission_operator")
-    if prev_op != selected_operator:
-        for k in (
-            "mission_ap_sel", "mission_reg", "mission_type", "mission_cs",
-            "mission_crew_sel", "mission_cdb", "mission_fo",
-            "mission_poc_sel", "mission_poc_name", "mission_poc_phone",
-            "mission_poc_email_functional", "mission_poc_email_personal",
-        ):
-            st.session_state.pop(k, None)
-        st.session_state["_prev_mission_operator"] = selected_operator
+    # Les sélecteurs Appareil / Crew / POC utilisent un key dynamique qui
+    # inclut un slug de l'operator (voir _op_slug). Streamlit recrée donc
+    # un widget vierge à chaque changement de compagnie → la 1ère option
+    # de la nouvelle liste se sélectionne automatiquement, plus de stale
+    # value héritée de l'opérateur précédent.
     st.divider()
     st.subheader("Appareil")
     ap = _aircraft_picker("mission", operator=selected_operator)
@@ -1301,7 +1307,7 @@ if page_idx == 0:
     crew = _crew_picker("mission", operator=selected_operator)
     st.divider()
     st.subheader("POC")
-    poc = _poc_picker("mission")
+    poc = _poc_picker("mission", operator=selected_operator)
 
     st.divider()
     # Indicateurs (sensors / armament / EW / VIP / DG) used to live here as
