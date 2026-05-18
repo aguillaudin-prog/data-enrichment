@@ -265,7 +265,13 @@ def get_last_status() -> dict:
 
 
 def health_check() -> dict:
-    """Probe Open-Meteo avec une requête minimale. Retourne {ok, latency_ms, error}."""
+    """Probe Open-Meteo avec une requête minimale. Retourne {ok, latency_ms, error}.
+
+    Met aussi à jour `_LAST_STATUS` pour que le caption "dernier appel"
+    de la page Admin se rafraîchisse au test manuel sans attendre un
+    fetch_wind_at_point réel via une mission.
+    """
+    global _LAST_STATUS
     t0 = time.time()
     try:
         resp = requests.get(
@@ -278,6 +284,14 @@ def health_check() -> dict:
             timeout=5,
         )
         latency = int((time.time() - t0) * 1000)
-        return {"ok": resp.status_code == 200, "latency_ms": latency, "error": None if resp.status_code == 200 else f"HTTP {resp.status_code}"}
+        ok = resp.status_code == 200
+        err = None if ok else f"HTTP {resp.status_code}: {resp.text[:200]}"
+        _LAST_STATUS = {
+            "ok": ok, "last_check": datetime.now(timezone.utc), "error": err,
+        }
+        return {"ok": ok, "latency_ms": latency, "error": err}
     except requests.exceptions.RequestException as e:
+        _LAST_STATUS = {
+            "ok": False, "last_check": datetime.now(timezone.utc), "error": str(e),
+        }
         return {"ok": False, "latency_ms": int((time.time() - t0) * 1000), "error": str(e)}
