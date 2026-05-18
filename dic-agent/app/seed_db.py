@@ -221,6 +221,67 @@ def seed_countries() -> None:
     print(f"  countries: {n}")
 
 
+def seed_canonical_routes() -> int:
+    """Catalogue de routes officielles opérateur (Amazone Airlines / DHC6-400),
+    pré-calculées au TY-BAB OEW=3813kg, ISA+20, calm. Source : doc opérateur
+    'AMAZONE AIRLINES — Temps de Vol & Charges offertes DHC6-400'.
+
+    Idempotent : rejouable, ON CONFLICT update les colonnes perf.
+    Retourne le nombre de routes seedées.
+    """
+    csv_path = SEEDS_DIR / "amazone_routes.csv"
+    if not csv_path.exists():
+        print("  amazone_routes.csv missing — skipped")
+        return 0
+    import csv as _csv
+    n = 0
+    with csv_path.open(encoding="utf-8") as f:
+        reader = _csv.DictReader(f)
+        for row in reader:
+            variant = row.get("variant", "").strip()
+            origin = row.get("origin", "").strip().upper()
+            destination = row.get("destination", "").strip().upper()
+            if not (origin and destination):
+                continue
+            route_text = row.get("route_text", "").strip()
+            # Nom unique : "AMAZONE 13a DBBB→DNAA" — variant identifie la
+            # sous-route (1.A maritime vs 1.B overflight etc.)
+            name = f"AMAZONE {variant} {origin}→{destination}"
+            legs_payload = [{
+                "order": 1, "origin": origin, "destination": destination,
+                "route_text": route_text, "fl": 90, "tas": 140,
+            }]
+            try:
+                payload_kg = int(row["payload_kg"]) if row.get("payload_kg") else None
+            except ValueError:
+                payload_kg = None
+            try:
+                ft_min = int(row["flight_time_min"]) if row.get("flight_time_min") else None
+            except ValueError:
+                ft_min = None
+            try:
+                dist_nm = float(row["distance_nm"]) if row.get("distance_nm") else None
+            except ValueError:
+                dist_nm = None
+            db.upsert_canonical_route({
+                "name": name,
+                "category": "AMAZONE — Bénin / DHC6 official",
+                "legs_json": json.dumps(legs_payload, ensure_ascii=False),
+                "origin_icao": origin,
+                "destination_icao": destination,
+                "distance_nm": dist_nm,
+                "payload_kg": payload_kg,
+                "flight_time_min": ft_min,
+                "alternate": (row.get("alternate") or "").strip() or None,
+                "aircraft_type": "DHC6",
+                "variant": variant or None,
+                "operator": "AMAZONE AIRLINES / DYNAMI AVIATION OPS",
+            })
+            n += 1
+    print(f"  canonical routes: {n}")
+    return n
+
+
 def main() -> int:
     print("→ Init schema…")
     db.init_schema()
@@ -234,6 +295,8 @@ def main() -> int:
     seed_runways()
     print("→ Countries…")
     seed_countries()
+    print("→ Canonical routes (Amazone)…")
+    seed_canonical_routes()
     print("Done.")
     return 0
 

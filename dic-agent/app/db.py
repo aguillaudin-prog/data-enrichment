@@ -187,6 +187,25 @@ def _migrate(conn) -> None:
     tpl_cols = {row[1] for row in cur.fetchall()}
     if tpl_cols and "category" not in tpl_cols:
         conn.execute("ALTER TABLE route_template ADD COLUMN category TEXT")
+    # Métadonnées opérationnelles ajoutées pour le catalogue Amazone : on
+    # stocke distance, payload offert, temps de vol, alternate et le type
+    # appareil pour lequel les perfs sont calibrées. `official=1` distingue
+    # les routes catalogue (read-only en pratique) des routes user-saved.
+    if tpl_cols:
+        for col_name, col_type in (
+            ("origin_icao", "TEXT"),
+            ("destination_icao", "TEXT"),
+            ("distance_nm", "REAL"),
+            ("payload_kg", "INTEGER"),
+            ("flight_time_min", "INTEGER"),
+            ("alternate", "TEXT"),
+            ("aircraft_type", "TEXT"),
+            ("variant", "TEXT"),
+            ("operator", "TEXT"),
+            ("official", "INTEGER DEFAULT 0"),
+        ):
+            if col_name not in tpl_cols:
+                conn.execute(f"ALTER TABLE route_template ADD COLUMN {col_name} {col_type}")
     cur = conn.execute("PRAGMA table_info(aircraft_type)")
     ac_cols = {row[1] for row in cur.fetchall()}
     if ac_cols:
@@ -516,6 +535,58 @@ def list_pocs() -> list[sqlite3.Row]:
 def list_route_templates() -> list[sqlite3.Row]:
     with connect() as c:
         return c.execute("SELECT * FROM route_template ORDER BY name").fetchall()
+
+
+def find_canonical_routes(origin: str, destination: str, aircraft_type: str | None = None) -> list[sqlite3.Row]:
+    """Routes catalogue (official=1) matching this origin → destination.
+
+    Optional `aircraft_type` filtre par appareil pour lequel les perfs ont
+    été calibrées (typiquement 'DHC6' pour le catalogue Amazone). Sans
+    filtre, on retourne toutes les variantes (1.A, 1.B, 1.C…) que l'OPS
+    peut comparer côte à côte.
+    """
+    with connect() as c:
+        sql = (
+            "SELECT * FROM route_template WHERE official = 1 "
+            "AND UPPER(origin_icao) = ? AND UPPER(destination_icao) = ?"
+        )
+        params: list = [origin.strip().upper(), destination.strip().upper()]
+        if aircraft_type:
+            sql += " AND UPPER(aircraft_type) = ?"
+            params.append(aircraft_type.strip().upper())
+        sql += " ORDER BY variant, name"
+        return c.execute(sql, params).fetchall()
+
+
+def upsert_canonical_route(row: dict) -> int:
+    """Idempotent insert/update keyed by name."""
+    with connect() as c:
+        cur = c.execute(
+            """
+            INSERT INTO route_template (
+                name, category, legs_json,
+                origin_icao, destination_icao,
+                distance_nm, payload_kg, flight_time_min,
+                alternate, aircraft_type, variant, operator, official
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(name) DO UPDATE SET
+                category=excluded.category, legs_json=excluded.legs_json,
+                origin_icao=excluded.origin_icao, destination_icao=excluded.destination_icao,
+                distance_nm=excluded.distance_nm, payload_kg=excluded.payload_kg,
+                flight_time_min=excluded.flight_time_min,
+                alternate=excluded.alternate, aircraft_type=excluded.aircraft_type,
+                variant=excluded.variant, operator=excluded.operator, official=1
+            RETURNING id
+            """,
+            (
+                row["name"], row.get("category"), row["legs_json"],
+                row.get("origin_icao"), row.get("destination_icao"),
+                row.get("distance_nm"), row.get("payload_kg"),
+                row.get("flight_time_min"), row.get("alternate"),
+                row.get("aircraft_type"), row.get("variant"), row.get("operator"),
+            ),
+        )
+        return cur.fetchone()[0]
 
 
 def save_aircraft(registration: str, type_icao: str | None, callsign: str | None, operator: str | None) -> int:

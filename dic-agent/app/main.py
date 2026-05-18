@@ -27,6 +27,22 @@ st.set_page_config(
 )
 
 
+@st.cache_resource
+def _ensure_canonical_routes_seeded() -> int:
+    """Seed du catalogue Amazone DHC6 au 1er démarrage Streamlit (cache
+    resource = exécuté une fois par process, pas par session). Idempotent
+    grâce à l'ON CONFLICT du upsert. Silencieux si le CSV manque ou DB
+    indisponible — ne bloque pas le boot de l'app."""
+    try:
+        from app.seed_db import seed_canonical_routes
+        return seed_canonical_routes()
+    except Exception:
+        return 0
+
+
+_ensure_canonical_routes_seeded()
+
+
 def _show_logged_in_user() -> None:
     """L'auth est gérée par Streamlit Community Cloud (Settings → Sharing →
     Only specific people, allowlist d'emails Google). Streamlit injecte
@@ -979,6 +995,54 @@ def _leg_editor(idx: int, leg: dict) -> dict:
             key=f"{kprefix}_eobt",
         )
     eobt = dt.datetime.combine(d, t).replace(tzinfo=dt.timezone.utc)
+
+    # Détection auto d'une route catalogue (opérateur officiel) pour ce
+    # couple O/D. Si match, on propose un bouton "📌 Route officielle"
+    # qui pré-remplit route_text + alternate + (info) payload, temps de
+    # vol, distance. Filtré par type appareil quand possible — sinon on
+    # affiche les variantes pour comparaison.
+    if origin and destination:
+        canon_rows = db.find_canonical_routes(origin, destination, ac_type or None)
+        # Pending apply (depuis click d'un bouton du tour précédent)
+        pending_canon = st.session_state.pop(f"{kprefix}_pending_canon", None)
+        if pending_canon is not None:
+            st.session_state[f"{kprefix}_route"] = pending_canon["route_text"]
+            st.session_state[f"{kprefix}_alternate"] = pending_canon["alternate"] or ""
+        if canon_rows:
+            with st.expander(
+                f"📌 {len(canon_rows)} route(s) officielle(s) "
+                f"{origin}→{destination} ({canon_rows[0]['operator'] or '—'})",
+                expanded=True,
+            ):
+                for r in canon_rows:
+                    cols = st.columns([3, 1, 1, 1, 1])
+                    with cols[0]:
+                        legs_json = json.loads(r["legs_json"])
+                        rt = legs_json[0]["route_text"]
+                        st.markdown(f"**{r['variant'] or '—'}** — alt `{r['alternate'] or '—'}`")
+                        st.caption(f"`{rt}`")
+                    with cols[1]:
+                        st.metric("Dist", f"{r['distance_nm']:.0f} NM" if r["distance_nm"] else "—")
+                    with cols[2]:
+                        st.metric("Payload", f"{r['payload_kg']} kg" if r["payload_kg"] else "—")
+                    with cols[3]:
+                        ft = r["flight_time_min"]
+                        st.metric("Time", f"{ft // 60}h{ft % 60:02d}" if ft else "—")
+                    with cols[4]:
+                        st.write("")
+                        if st.button(
+                            "📌 Appliquer",
+                            key=f"{kprefix}_apply_canon_{r['id']}",
+                            help=(
+                                f"Alt: {r['alternate'] or '—'} · "
+                                f"calibré pour {r['aircraft_type'] or '?'}"
+                            ),
+                        ):
+                            st.session_state[f"{kprefix}_pending_canon"] = {
+                                "route_text": json.loads(r["legs_json"])[0]["route_text"],
+                                "alternate": r["alternate"],
+                            }
+                            st.rerun()
 
     rc1, rc2 = st.columns([4, 1])
     with rc1:
