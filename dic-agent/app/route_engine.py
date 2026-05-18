@@ -545,7 +545,14 @@ def _label_for_crossing(
             coord_points,
             key=lambda p: (p.lat - lat0) ** 2 + (p.lon - lon0) ** 2,
         )
-        return nearest.label
+        # Sanity check : si le waypoint nommé le plus proche est à plus
+        # de 50 NM du crossing géographique, on retombe sur "BORDER" —
+        # le waypoint est probablement du mauvais côté ou trop loin pour
+        # représenter réellement la frontière (route DCT sans fix proche,
+        # détour qui s'éloigne du grand-cercle, etc.).
+        dist_nm = _great_circle_nm((nearest.lat, nearest.lon), (lat0, lon0))
+        if dist_nm <= 50:
+            return nearest.label
     return "BORDER"
 
 
