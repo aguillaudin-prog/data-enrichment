@@ -1830,9 +1830,38 @@ if page_idx == 2:
             seen_missing[p.label] = seen_missing.get(p.label, 0) + 1
             _missing_point_form(p.label, key=f"miss_{i}_{pidx}_{seen_missing[p.label]}_{p.label}")
 
+        # Vent : si |delta_pct| >= 10% du still-air, on affiche le temps
+        # wind-corrected à la place. Sinon on garde le still-air sans
+        # mention pour ne pas polluer visuellement. Silent fail si
+        # Open-Meteo down (network/timeout/J+16 hors fenêtre).
+        wind_info: dict | None = None
+        try:
+            from app import wind_client
+            coord_pts = [
+                (p.lat, p.lon) for p in (resolution.points or [])
+                if p.lat is not None and p.lon is not None
+            ]
+            if len(coord_pts) >= 2 and isinstance(leg.get("eobt"), dt.datetime):
+                wind_info = wind_client.compute_wind_adjusted_time(
+                    coord_pts, resolution.total_distance_nm,
+                    leg.get("tas", 140), leg["eobt"], int(leg.get("fl", 90)),
+                )
+        except Exception:
+            wind_info = None
+
         c1, c2, c3 = st.columns(3)
         c1.metric("Distance", f"{resolution.total_distance_nm:.0f} NM")
-        c2.metric("Temps de vol", f"{resolution.total_time_min:.0f} min")
+        # Affiche temps corrigé seulement si le vent change le temps de >=10%
+        if wind_info and wind_info["available"] and abs(wind_info["delta_pct"]) >= 10:
+            c2.metric("Temps de vol", f"{wind_info['wind_adjusted_min']:.0f} min")
+            kind = "headwind" if wind_info["headwind_kt"] >= 0 else "tailwind"
+            sign = "+" if wind_info["headwind_kt"] >= 0 else "−"
+            c2.caption(
+                f"💨 Vent pris en compte ({kind} {sign}{abs(wind_info['headwind_kt']):.0f} kt · "
+                f"still-air était {wind_info['still_air_min']:.0f} min)"
+            )
+        else:
+            c2.metric("Temps de vol", f"{resolution.total_time_min:.0f} min")
         c3.metric("Pays traversés", str(len(resolution.segments)))
 
         # Carte visuelle de la route (origine + destination + waypoints + alt)
@@ -2191,6 +2220,37 @@ if page_idx == 4:
         "Configuration et données opérationnelles. Ces sections n'impactent pas "
         "la génération du DIC tant que tu n'en as pas besoin."
     )
+
+    # Statut des APIs externes — un coup d'œil rapide pour savoir si
+    # quelque chose est cassé côté upstream.
+    with st.expander("🌐 Statut APIs externes", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Open-Meteo (vent aloft)**")
+            if st.button("🔍 Tester Open-Meteo", key="admin_om_test"):
+                from app import wind_client
+                hc = wind_client.health_check()
+                if hc["ok"]:
+                    st.success(f"✅ OK ({hc['latency_ms']} ms)")
+                else:
+                    st.error(f"❌ KO : {hc['error']}")
+            try:
+                from app import wind_client
+                ls = wind_client.get_last_status()
+                if ls["ok"] is None:
+                    st.caption("_(aucun appel depuis le boot)_")
+                elif ls["ok"]:
+                    st.caption(f"✓ dernier appel OK · {ls['last_check'].strftime('%H:%M:%SZ') if ls['last_check'] else '?'}")
+                else:
+                    st.caption(
+                        f"⚠️ dernier appel KO · {ls['last_check'].strftime('%H:%M:%SZ') if ls['last_check'] else '?'} · "
+                        f"erreur : {ls['error']}"
+                    )
+            except Exception:
+                pass
+        with c2:
+            st.markdown("**Autorouter.aero**")
+            st.caption("Probe disponible via le bouton 🤖 Suggérer en page Legs.")
 
     with st.expander("📥 Flotte type — import rapide", expanded=False):
         st.markdown(
