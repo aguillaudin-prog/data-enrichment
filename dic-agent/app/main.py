@@ -1912,6 +1912,26 @@ if page_idx == 4:
             "rejouable, ne crée pas de doublons grâce à l'unicité de "
             "l'immatriculation)."
         )
+        # Perf des types ICAO de la flotte. Upsert avant les aircraft pour
+        # satisfaire la FK aircraft.type_icao → aircraft_type. Inclut les
+        # types absents de la CSV seed (L410, B190).
+        FLEET_TYPES = [
+            {"icao_designator": "DA62", "full_name": "Diamond DA62",
+             "manufacturer": "Diamond", "cruise_tas_kt": 192,
+             "service_ceiling_ft": 20000, "range_nm": 1300, "wake_category": "L"},
+            {"icao_designator": "DHC6", "full_name": "De Havilland Canada DHC-6 Twin Otter",
+             "manufacturer": "De Havilland Canada", "cruise_tas_kt": 160,
+             "service_ceiling_ft": 25000, "range_nm": 800, "wake_category": "L"},
+            {"icao_designator": "L410", "full_name": "Let L-410 Turbolet",
+             "manufacturer": "Let Kunovice", "cruise_tas_kt": 195,
+             "service_ceiling_ft": 20000, "range_nm": 770, "wake_category": "L"},
+            {"icao_designator": "B190", "full_name": "Beechcraft 1900D",
+             "manufacturer": "Beechcraft", "cruise_tas_kt": 280,
+             "service_ceiling_ft": 25000, "range_nm": 1500, "wake_category": "M"},
+            {"icao_designator": "A321", "full_name": "Airbus A321",
+             "manufacturer": "Airbus", "cruise_tas_kt": 447,
+             "service_ceiling_ft": 39800, "range_nm": 3200, "wake_category": "M"},
+        ]
         DEFAULT_FLEET = [
             # (registration, type_icao, callsign, operator)
             ("F-HJTA",   "DA62",  "HJTA",   "DYNAMI AVIATION OPS"),
@@ -1921,6 +1941,7 @@ if page_idx == 4:
             ("F-HSVA",   "A321",  "SVA21F", "SKYVISION"),
         ]
         if st.button("📥 Importer flotte type"):
+            db.upsert_aircraft_types(FLEET_TYPES)
             inserted = 0
             for reg, ty, cs, op in DEFAULT_FLEET:
                 db.save_aircraft(reg, ty, cs, op)
