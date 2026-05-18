@@ -2404,18 +2404,41 @@ if page_idx == 4:
                 pass
         with c2:
             st.markdown("**Autorouter.aero**")
-            if st.button("🔍 Tester autorouter", key="admin_ar_test"):
-                from app import autorouter_client
-                ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
-                if not ar_cfg.is_configured():
-                    st.error("❌ Pas configuré (client_id / client_secret manquants dans secrets).")
-                else:
+            from app import autorouter_client
+            ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
+            if not ar_cfg.is_configured():
+                st.warning("⚠️ Pas configuré")
+                with st.popover("Voir config Secrets requise"):
+                    st.caption(
+                        "Ajoute ces 4 lignes dans Streamlit Cloud → "
+                        "Settings → Secrets :"
+                    )
+                    st.code(
+                        "[autorouter]\n"
+                        'base_url = "https://api.autorouter.aero/v1.0"\n'
+                        'token_url = "https://api.autorouter.aero/v1.0/oauth2/token"\n'
+                        'client_id = "ton.email@example.org"\n'
+                        'client_secret = "ton-mot-de-passe-autorouter"\n',
+                        language="toml",
+                    )
+            else:
+                st.caption(f"✓ Configuré · `{ar_cfg.base_url}`")
+                if st.button("🔍 Tester autorouter", key="admin_ar_test"):
                     try:
                         info = autorouter_client.ping_version(ar_cfg)
-                        st.success(f"✅ OK · version `{info.get('version', '?')}`")
+                        st.success(
+                            f"✅ API v{info.get('major', '?')}."
+                            f"{info.get('minor', '?')}."
+                            f"{info.get('patch', '?')} "
+                            f"({'prod' if info.get('production') else 'sandbox'})"
+                        )
+                        try:
+                            autorouter_client._get_token(ar_cfg)
+                            st.success("✅ Token OAuth obtenu — credentials valides.")
+                        except autorouter_client.AutorouterError as e:
+                            st.error(f"❌ Token KO : {e}")
                     except autorouter_client.AutorouterError as e:
-                        st.error(f"❌ KO : {e}")
-            st.caption("_(probe `/system/version` — pas de quota consommé)_")
+                        st.error(f"❌ Version probe KO : {e}")
 
     with st.expander("📥 Flotte type — import rapide", expanded=False):
         st.markdown(
@@ -2517,37 +2540,5 @@ if page_idx == 4:
             )
             st.success(f"Aérodrome {new_label} ajouté.")
             st.rerun()
-
-    with st.expander("🌐 Autorouter API (suggestion approfondie)", expanded=True):
-        from app import autorouter_client
-        ar_cfg = autorouter_client.AutorouterConfig.from_secrets(st.secrets)
-        if ar_cfg.is_configured():
-            st.caption(f"✓ Configuré — `{ar_cfg.base_url}`")
-            if st.button("🔌 Test connexion", key="ar_test"):
-                try:
-                    info = autorouter_client.ping_version(ar_cfg)
-                    st.success(
-                        f"API v{info.get('major')}.{info.get('minor')}.{info.get('patch')} "
-                        f"({'prod' if info.get('production') else 'sandbox'})"
-                    )
-                    try:
-                        autorouter_client._get_token(ar_cfg)
-                        st.success("Token OAuth obtenu — credentials valides.")
-                    except autorouter_client.AutorouterError as e:
-                        st.error(f"Token : {e}")
-                except autorouter_client.AutorouterError as e:
-                    st.error(str(e))
-        else:
-            st.caption(
-                "Pas configuré. Ajoute dans Streamlit Cloud → Settings → Secrets :"
-            )
-            st.code(
-                "[autorouter]\n"
-                'base_url = "https://api.autorouter.aero/v1.0"\n'
-                'token_url = "https://api.autorouter.aero/v1.0/oauth2/token"\n'
-                'client_id = "ton.email@example.org"\n'
-                'client_secret = "ton-mot-de-passe-autorouter"\n',
-                language="toml",
-            )
 
     _step_nav_footer()
