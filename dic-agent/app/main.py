@@ -345,60 +345,56 @@ def _search_airports(query: str) -> list[tuple[str, str]]:
 
 
 def _apt_input(label: str, default: str, field_key: str) -> str:
-    """Champ ICAO natif + suggestions cliquables.
+    """Champ ICAO natif + dropdown de suggestions.
 
-    streamlit-searchbox (composant React 3rd-party) perd le focus à
-    chaque rerun Streamlit → 1er keystroke perdu systématiquement.
-    Le debounce ne corrige pas ça : c'est une limite architecturale
-    du composant.
+    Combo bulletproof :
+    - text_input pour la saisie ICAO ou nom partiel (focus stable)
+    - si saisie = ICAO 4-lettres valide → commit direct, pas de dropdown
+    - sinon (2+ chars saisis) → un selectbox apparaît avec les matches,
+      on sélectionne dans la liste → ICAO retourné
 
-    Remplacement : `st.text_input` natif (jamais de focus jump) + une
-    petite liste de boutons-suggestions sous le champ quand la saisie
-    n'est pas un ICAO 4-lettres reconnu. L'utilisateur tape ICAO
-    direct (cas 90%) ou clique sur une suggestion par nom (cas 10%).
+    streamlit-searchbox (composant React 3rd-party) perd le focus à la
+    première frappe à cause de son cycle de rerun, on ne l'utilise plus.
     """
-    # Valeur courante : soit suggestion cliquée en attente, soit la
-    # saisie utilisateur, soit le default fourni.
-    pending = st.session_state.pop(f"{field_key}_pending", None)
-    if pending is not None:
-        st.session_state[field_key] = pending
-
     raw = st.text_input(
         label,
         value=st.session_state.get(field_key, default or ""),
-        placeholder="ICAO (ex. LFPB) ou nom (ex. Le Bourget)",
+        placeholder="ICAO (ex. LFPB) ou nom (ex. Avignon)",
         key=field_key,
         max_chars=40,
     )
     raw = (raw or "").strip()
-    value = raw.upper() if len(raw) <= 4 else raw
 
-    # Si la saisie est un ICAO 4-lettres trouvé en base → caption verte
-    # et on retourne directement, pas de suggestions à afficher.
-    if len(value) == 4 and value.isalnum():
+    # 1) Saisie ICAO 4-lettres valide → commit immédiat.
+    if len(raw) == 4 and raw.isalnum():
+        value = raw.upper()
         ap = db.find_airport(value)
         if ap:
             country = f" ({ap['country_iso']})" if ap['country_iso'] else ""
             st.caption(f"✓ **{value}** · {ap['name']}{country}")
             return value
 
-    # Sinon, suggestions filtrées (max 6, boutons cliquables) — la saisie
-    # peut être un fragment ICAO ou un nom de ville/aérodrome.
+    # 2) Saisie 2+ chars → dropdown de suggestions.
     if len(raw) >= 2:
-        suggestions = _search_airports(raw)[:6]
+        suggestions = _search_airports(raw)[:15]
         if suggestions:
-            st.caption(f"💡 **{len(suggestions)} suggestion(s)** — clique pour sélectionner :")
-            cols = st.columns(min(len(suggestions), 2))
-            for i, (label_txt, icao) in enumerate(suggestions):
-                with cols[i % 2]:
-                    full = label_txt.replace("**", "")
-                    if st.button(full, key=f"{field_key}_sug_{icao}", width="stretch"):
-                        st.session_state[f"{field_key}_pending"] = icao
-                        st.rerun()
-        elif raw:
+            labels = [lbl.replace("**", "") for lbl, _ in suggestions]
+            sel = st.selectbox(
+                f"  → {len(suggestions)} résultat(s), choisis :",
+                labels,
+                key=f"{field_key}_drop",
+                label_visibility="collapsed",
+            )
+            if sel:
+                chosen_icao = suggestions[labels.index(sel)][1]
+                st.caption(f"✓ Sélectionné : **{chosen_icao}**")
+                return chosen_icao
+        else:
             st.caption(f"⚠️ Aucun aérodrome ne matche `{raw}`")
 
-    return value
+    # 3) Pas assez de chars ou pas de match : on retourne ce qu'on a
+    # (peut être une valeur précédente déjà en session_state).
+    return raw.upper() if len(raw) <= 4 else raw
 
 
 def _run_dual_suggest(
