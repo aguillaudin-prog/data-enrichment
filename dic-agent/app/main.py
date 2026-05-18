@@ -20,12 +20,8 @@ import streamlit as st
 
 from app import db, docx_generator, fpl_exporter, route_engine, route_suggester
 
-_LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "dynami_logo.png"
-_HAS_LOGO = _LOGO_PATH.exists()
-
 st.set_page_config(
-    page_title="DIC Agent — Dynami Aviation OPS",
-    page_icon=str(_LOGO_PATH) if _HAS_LOGO else "🛩️",
+    page_title="DIC Agent",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -1135,14 +1131,7 @@ def _missing_point_form(label: str, key: str) -> None:
 
 # ============ UI ============
 
-if _HAS_LOGO:
-    col_logo, col_title = st.columns([1, 8], vertical_alignment="center")
-    with col_logo:
-        st.image(str(_LOGO_PATH), width=80)
-    with col_title:
-        st.title("DIC Agent — Diplomatic Clearance generator")
-else:
-    st.title("🛩️ DIC Agent — Diplomatic Clearance generator")
+st.title("🛩️ DIC Agent — Diplomatic Clearance generator")
 st.caption("FRA / ICAO — application locale. Données : OurAirports + Natural Earth.")
 
 if "legs" not in st.session_state:
@@ -1198,10 +1187,7 @@ _legs_done = any(
 )
 
 with st.sidebar:
-    if _HAS_LOGO:
-        st.image(str(_LOGO_PATH), width=120)
-    else:
-        st.header("🛩️ DIC Agent")
+    st.header("🛩️ DIC Agent")
     st.caption("Suis les 3 étapes ci-dessous, dans l'ordre.")
     for i, (num, title, subtitle) in enumerate(PAGES):
         is_current = (st.session_state.page_idx == i)
