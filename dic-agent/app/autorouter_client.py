@@ -767,22 +767,41 @@ def _normalise_solution(
         name = (wp.get("name") or wp.get("icao") or "").strip()
         if name:
             waypoints.append(name)
+    # Stratégie d'extraction de route_text, par ordre décroissant de qualité :
+    #
+    #   1. **SUGGEST IFPS dans les logs** — Eurocontrol nous a fait une
+    #      suggestion condensée Item-15 propre, c'est l'idéal.
+    #   2. **Item 15 du FPL string** — la route telle que validée par IFPS,
+    #      avec airways/SID/STAR canoniques. Pour les couples sans SUGGEST.
+    #   3. **Waypoint join (fallback)** — concatène les waypoints expansés.
+    #      Souvent invalide (DCT + airway misaligned) → dernier recours.
+
+    # 3 : fallback waypoints
     route_text = ""
     if len(waypoints) > 2:
-        # Drop departure + destination; the middle is the enroute portion
         route_text = " ".join(waypoints[1:-1])
-    # Si IFPS a émis une suggestion SUGGEST:..., on la préfère à la version
-    # waypoint-by-waypoint qui contient souvent des SID expandés invalides
-    # (ex: "PB253 PB259 PB260 OXCEL ..." rejeté par les validateurs car
-    # PB259 n'est pas un airway). Le SUGGEST IFPS est la version Item-15
-    # condensée et propre, directement injectable dans un FPL.
+
+    # 2 : Item 15 du FPL string (entre tokens séparés par " -")
+    # Format ICAO : "(FPL-CS-IS -A321/M-SDFGRY/S -DEP HHMM -N0447F360 ROUTE -DEST EET -OTHER)"
+    # Item 15 contient "speed_level ROUTE". On strip le 1er token.
+    if fpl_str:
+        body = fpl_str.strip().lstrip("(").rstrip(")")
+        tokens = [t.strip() for t in body.split(" -")]
+        # On cherche le token qui commence par un préfixe vitesse (N/M/K).
+        for tok in tokens:
+            parts = tok.split()
+            if parts and parts[0] and parts[0][0].upper() in ("N", "M", "K") and len(parts) > 1:
+                # Vérification supplémentaire : le 1er token doit être de la
+                # forme N0447F360 (vitesse + FL) — au moins 7 chars, chiffres.
+                if len(parts[0]) >= 7 and parts[0][1:5].isdigit():
+                    route_text = " ".join(parts[1:])
+                    break
+
+    # 1 : SUGGEST line (priorité max)
     for line in logs:
         if "SUGGEST:" not in line:
             continue
-        # Format typique : "fplvalidation: SUGGEST:N0174F150 MONOT6F MONOT R161 TRARE R31 MTL MTL7V"
         sug = line.split("SUGGEST:", 1)[1].strip()
-        # Le SUGGEST commence par "N0174F150" (vitesse + FL) — on retire
-        # ce premier token qui n'a pas sa place dans le champ route.
         tokens = sug.split()
         if tokens and tokens[0][0].upper() in ("N", "M", "K"):
             tokens = tokens[1:]
