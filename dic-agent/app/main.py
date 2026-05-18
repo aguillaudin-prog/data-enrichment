@@ -999,10 +999,14 @@ def _leg_editor(idx: int, leg: dict) -> dict:
     # Détection auto d'une route catalogue (opérateur officiel) pour ce
     # couple O/D. Si match, on propose un bouton "📌 Route officielle"
     # qui pré-remplit route_text + alternate + (info) payload, temps de
-    # vol, distance. Filtré par type appareil quand possible — sinon on
-    # affiche les variantes pour comparaison.
-    if origin and destination:
-        canon_rows = db.find_canonical_routes(origin, destination, ac_type or None)
+    # vol, distance. Wrapped en try/except : si le helper db.* manque
+    # (déploiement partiel) ou le seed n'a pas tourné, on dégrade en
+    # silence sans casser le leg editor.
+    if origin and destination and hasattr(db, "find_canonical_routes"):
+        try:
+            canon_rows = db.find_canonical_routes(origin, destination, ac_type or None)
+        except Exception:
+            canon_rows = []
         # Pending apply (depuis click d'un bouton du tour précédent)
         pending_canon = st.session_state.pop(f"{kprefix}_pending_canon", None)
         if pending_canon is not None:
