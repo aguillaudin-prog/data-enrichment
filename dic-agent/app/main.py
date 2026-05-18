@@ -1087,6 +1087,81 @@ def _render_gramet_section(*, legs: list[dict], ar_cfg) -> None:
                             st.error(f"Briefing : {e}")
 
 
+def _render_insert_after_leg(leg_idx: int, leg: dict) -> None:
+    """Petit bouton ➕ entre chaque leg pour insérer un nouveau leg.
+
+    Cliquer ouvre un sub-menu compact (expander) avec :
+    - "Leg vide" → insère un leg blanc
+    - Missions Amazone dont le 1er leg part de la destination du leg
+      courant → insère SEULEMENT le 1er leg de cette mission (pour ne
+      pas casser le retour final si la mission user prévoit un retour
+      à DBBB en fin de course).
+
+    Empreinte UI : un expander collapsed par défaut entre chaque leg.
+    Pas affiché si destination du leg pas saisie (rien à proposer).
+    """
+    dest = (leg.get("destination") or "").strip().upper()
+    if not dest:
+        return
+    # Cherche les missions Amazone dont le 1er leg part de `dest`.
+    matching = []
+    try:
+        with db.connect() as c:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(route_template)").fetchall()}
+            if "official" not in cols:
+                return
+            rows = c.execute(
+                "SELECT name, legs_json FROM route_template "
+                "WHERE official = 1 AND variant = 'mission'"
+            ).fetchall()
+        for r in rows:
+            try:
+                rlegs = json.loads(r["legs_json"])
+                if rlegs and (rlegs[0].get("origin") or "").strip().upper() == dest:
+                    matching.append((r["name"], rlegs))
+            except (json.JSONDecodeError, TypeError):
+                continue
+    except Exception:
+        return
+    label = (
+        f"➕ Insérer un leg après celui-ci"
+        + (f" · {len(matching)} mission(s) Amazone partent de {dest}" if matching else "")
+    )
+    with st.expander(label, expanded=False):
+        # Option 1 : leg vide
+        if st.button(
+            "⬜ Leg vide", key=f"ins_blank_{leg_idx}_{_legs_sid()}",
+            help="Insère un leg vide à pré-remplir manuellement",
+        ):
+            st.session_state["_pending_insert_leg"] = {
+                "after": leg_idx,
+                "legs": [{"origin": dest, "destination": "", "fl": 90,
+                          "tas": 140, "route_text": ""}],
+            }
+            st.rerun()
+        # Option 2..N : missions Amazone partant de `dest`
+        for name, rlegs in matching:
+            first_leg = rlegs[0]
+            label_btn = (
+                f"📌 {name} · {first_leg['origin']} → {first_leg['destination']}"
+            )
+            if st.button(
+                label_btn, key=f"ins_mis_{leg_idx}_{name}_{_legs_sid()}",
+                help=f"Insère uniquement le 1er leg de cette mission ({first_leg['origin']} → {first_leg['destination']})",
+            ):
+                st.session_state["_pending_insert_leg"] = {
+                    "after": leg_idx,
+                    "legs": [{
+                        "origin": first_leg["origin"],
+                        "destination": first_leg["destination"],
+                        "fl": first_leg.get("fl", 90),
+                        "tas": first_leg.get("tas", 140),
+                        "route_text": first_leg.get("route_text", ""),
+                    }],
+                }
+                st.rerun()
+
+
 def _leg_editor(idx: int, leg: dict) -> dict:
     sid = _legs_sid()
     kprefix = f"leg_s{sid}_{idx}"
@@ -1787,8 +1862,22 @@ if page_idx == 1:
     if st.session_state.get("_loaded_tpl_name") and sel_tpl == st.session_state.get("_loaded_tpl_name"):
         st.caption(f"🗂️ Mission active : **{st.session_state['_loaded_tpl_name']}**")
 
+    # Apply un insert pending depuis le tour précédent (click sur ➕
+    # ou sur une mission Amazone proposée en sub-menu).
+    pending_insert = st.session_state.pop("_pending_insert_leg", None)
+    if pending_insert is not None:
+        idx_after = pending_insert["after"]
+        new_legs = pending_insert["legs"]
+        # Insère les nouveaux legs juste après idx_after (= insert at idx_after+1)
+        st.session_state.legs[idx_after + 1:idx_after + 1] = new_legs
+        _bump_legs_sid()  # force fresh widget keys pour les legs déplacés
+
     for i, leg in enumerate(st.session_state.legs):
         st.session_state.legs[i] = _leg_editor(i, leg)
+        # Bouton insertion après chaque leg — petit, discret. Click →
+        # ouvre un sub-menu avec "leg vide" + suggestions Amazone qui
+        # partent de la destination du leg courant.
+        _render_insert_after_leg(i, leg)
 
     # Inline +/− leg controls at the bottom — concise, no header noise.
     lc1, lc2, lc3, _ = st.columns([1, 1, 2, 3])
