@@ -106,7 +106,12 @@ def fetch_wind_at_point(
         "timezone": "UTC",
         "start_hour": hour_iso,
         "end_hour": hour_iso,
-        "forecast_days": 16,
+        # NB : `forecast_days` est mutuellement exclusif avec
+        # start_hour/end_hour côté Open-Meteo. On laisse l'API gérer
+        # l'horizon de prévision par défaut (~7 jours, jusqu'à 16 jours
+        # selon disponibilité). Si l'EOBT est plus loin que ça, on
+        # tombera dans le branche "no data at hour" et le caller
+        # fall-back proprement sur still-air.
     }
     try:
         resp = requests.get(_BASE_URL, params=params, timeout=8)
