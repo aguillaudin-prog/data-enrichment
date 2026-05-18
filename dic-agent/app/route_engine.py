@@ -460,8 +460,14 @@ def compute_leg(
             end_idx += 1
         kind_e, iso_e, name_e, t_e, pt_e = crossings[end_idx]
 
-        entry_label = _label_for_crossing(kind_s, points, coord_points, start_idx == 0)
-        exit_label = _label_for_crossing(kind_e, points, coord_points, end_idx == len(crossings) - 1)
+        entry_label = _label_for_crossing(
+            kind_s, points, coord_points, start_idx == 0,
+            crossing_point=pt_s,
+        )
+        exit_label = _label_for_crossing(
+            kind_e, points, coord_points, end_idx == len(crossings) - 1,
+            crossing_point=pt_e,
+        )
         route_in_country = _route_string_in_country(points, iso_s, country_index)
         segments.append(
             StateSegment(
@@ -514,31 +520,85 @@ def compute_leg(
     return res
 
 
-def _label_for_crossing(kind: str, points, coord_points, is_first_or_last: bool) -> str:
+def _label_for_crossing(
+    kind: str, points, coord_points, is_first_or_last: bool,
+    crossing_point: tuple[float, float] | None = None,
+) -> str:
+    """Label de l'entrée/sortie d'un pays.
+
+    - Origin / destination : on prend le label de l'aéroport (1er ou
+      dernier point de la route).
+    - Border crossing intermédiaire : avant on retournait "BORDER" en dur,
+      ce qui posait problème aux autorités destinataires (cf. retour
+      collègue : ils attendent POLTO pour la frontière BJ/NG, etc.).
+      Maintenant on prend le **waypoint nommé géographiquement le plus
+      proche** du point de crossing — applique génériquement à toute
+      frontière, quelle qu'elle soit.
+    """
     if kind == "origin":
         return points[0].label
     if kind == "destination":
         return points[-1].label
+    if crossing_point and coord_points:
+        lat0, lon0 = crossing_point
+        nearest = min(
+            coord_points,
+            key=lambda p: (p.lat - lat0) ** 2 + (p.lon - lon0) ** 2,
+        )
+        return nearest.label
     return "BORDER"
 
 
 def _route_string_in_country(points: list[ResolvedPoint], iso: str | None, idx) -> str:
-    """Waypoints that geographically fall inside country `iso`, joined as
-    'A - B - C'. Returns 'DCT' if no waypoint matches — common for thin
-    transit countries (Liberia between Ivory Coast and Sierra Leone) where
-    the great-circle clips a corner without any published fix on the way.
-    Better than an empty cell in the DIC, which signalled 'missing data'
-    to the receiving authority."""
+    """Waypoints + airways traversant le pays `iso`, dans l'ordre du plan
+    de vol, joints en 'A - B - R778 - C'.
+
+    Avant : on filtrait tous les tokens sans coordonnées (= les airways
+    R778, W951, L433, etc.) → la cellule (41) du DIC ne montrait que les
+    waypoints, perdant la lisibilité ATC. Retour collègue : il faut
+    *garder* les noms d'airways entre les waypoints pour que la route
+    soit auto-vérifiable.
+
+    Règle : un airway est inclus si SES DEUX waypoints voisins (le plus
+    proche avant et le plus proche après dans la liste) sont dans le même
+    pays `iso`. Sinon on l'omet (airway qui traverse la frontière n'a pas
+    sa place dans la cellule d'un pays unique).
+
+    Fallback 'DCT' inchangé pour les pays traversés sans waypoint
+    (great circle qui clippe juste un coin de territoire).
+    """
     if not iso:
         return ""
-    labels: list[str] = []
+    # Classifier chaque point : (point, pays_iso_ou_None)
+    classified: list[tuple[ResolvedPoint, str | None]] = []
     for p in points:
         if p.lat is None:
+            classified.append((p, None))  # airway : à résoudre via voisins
+        else:
+            p_iso, _ = _country_at(p.lat, p.lon, idx)
+            classified.append((p, p_iso))
+
+    out: list[str] = []
+    n = len(classified)
+    for i, (p, c) in enumerate(classified):
+        if c == iso:
+            out.append(p.label)
             continue
-        p_iso, _ = _country_at(p.lat, p.lon, idx)
-        if p_iso == iso:
-            labels.append(p.label)
-    return " - ".join(labels) if labels else "DCT"
+        if p.lat is None:
+            # Airway : check le pays du waypoint précédent ET suivant
+            prev_c = next(
+                (classified[j][1] for j in range(i - 1, -1, -1)
+                 if classified[j][1] is not None),
+                None,
+            )
+            next_c = next(
+                (classified[j][1] for j in range(i + 1, n)
+                 if classified[j][1] is not None),
+                None,
+            )
+            if prev_c == iso and next_c == iso:
+                out.append(p.label)
+    return " - ".join(out) if out else "DCT"
 
 
 def format_zulu(t: dt.datetime, style: str = "FRA") -> str:

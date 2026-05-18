@@ -157,11 +157,16 @@ def _format_airport(icao: str) -> str:
     country_upper = (country or "").upper()
     name = (ap["name"] or "").strip()
     if is_user_added:
+        # FOB / militaire non-publié : on garde le format avec coords pour
+        # que l'autorité destinataire puisse géolocaliser sans ambiguïté.
         label = name.upper() if name and name.upper() != icao else icao
         coords = f"{_format_dms_lat(ap['lat'])} / {_format_dms_lon(ap['lon'])}"
         parts = [p for p in (label, country_upper, coords) if p]
         return " ".join(parts)
-    # Standard ICAO airport: CITY COUNTRY ICAO
+    # Standard ICAO airport : format opérateur de référence = 'CITY (ICAO)'
+    # (avant : 'CITY COUNTRY ICAO' — la collègue ops a remonté que le format
+    # avec parenthèses était le standard attendu, sans pays redondant car
+    # déjà identifié par le préfixe ICAO 2-lettres).
     municipality = ""
     try:
         municipality = (ap["municipality"] or "").strip()
@@ -169,8 +174,7 @@ def _format_airport(icao: str) -> str:
         municipality = ""
     if not municipality:
         municipality = name.split()[0] if name else ""
-    parts = [p for p in (municipality.upper(), country_upper, icao) if p]
-    return " ".join(parts)
+    return f"{municipality.upper()} ({icao})" if municipality else icao
 
 
 def _format_airports_list(icaos: list[str]) -> str:

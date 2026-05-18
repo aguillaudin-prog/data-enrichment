@@ -1236,7 +1236,7 @@ if "page_idx" not in st.session_state:
 PAGES = [
     ("1.", "Mission & profils", "Avion, équipage, compagnie"),
     ("2.", "Legs", "Itinéraire, dates, route"),
-    ("3.", "Preview & export", "Génère le .docx DIC"),
+    ("3.", "Preview & export", "Récapitulatif des legs, validation, puis export .docx + FPL + briefing"),
     ("📋", "Historique", "Missions enregistrées, routes en base"),
     ("⚙", "Admin", "Aérodromes hors ICAO, API autorouter, config"),
 ]
