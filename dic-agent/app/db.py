@@ -541,11 +541,14 @@ def list_route_templates() -> list[sqlite3.Row]:
 
 
 def list_user_templates() -> list[sqlite3.Row]:
-    """Routes sauvegardées par l'utilisateur (official=0 ou NULL).
-    Exclut le catalogue opérateur officiel (Amazone, etc.) qui est
-    consommé via le mécanisme auto-apply sur la page Legs, pas via
-    le picker Mission."""
+    """Routes sauvegardées par l'utilisateur — exclut le catalogue
+    opérateur officiel. Resiliente au schema pré-migration : si la
+    colonne `official` n'existe pas encore (DB historique), retourne
+    toutes les routes (rétro-compatible)."""
     with connect() as c:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(route_template)").fetchall()}
+        if "official" not in cols:
+            return c.execute("SELECT * FROM route_template ORDER BY name").fetchall()
         return c.execute(
             "SELECT * FROM route_template "
             "WHERE official IS NULL OR official = 0 "
@@ -555,8 +558,11 @@ def list_user_templates() -> list[sqlite3.Row]:
 
 def count_official_routes() -> int:
     """Compte les routes officielles (catalogue opérateur). 0 = besoin de
-    re-seed."""
+    re-seed. Retourne 0 si la colonne n'existe pas encore (force re-seed)."""
     with connect() as c:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(route_template)").fetchall()}
+        if "official" not in cols:
+            return 0
         return c.execute(
             "SELECT COUNT(*) FROM route_template WHERE official = 1"
         ).fetchone()[0]

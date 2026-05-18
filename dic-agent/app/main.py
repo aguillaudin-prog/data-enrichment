@@ -28,22 +28,17 @@ st.set_page_config(
 
 
 def _ensure_amazone_data_seeded(force: bool = False) -> int:
-    """Seed des données opérateur Amazone. Idempotent — ON CONFLICT update.
-    Couvre :
-      - 3 waypoints maritimes custom (EBUSO, ENKIT, ARABA)
-      - 56 routes catalogue DHC6 (airways + payload + temps de vol)
-      - Affinage perf DHC6 (OEW TY-BAB 3813 kg)
-
-    Auto-rejoue si les routes officielles ont été supprimées (ex : user
-    a fait nettoyage trop large depuis page Historique). Détection via
-    count_official_routes() == 0.
-    """
+    """Seed des données opérateur Amazone. Idempotent. Self-healing : si
+    les routes officielles ont disparu (suppression manuelle, wipe, etc.)
+    le seed re-tourne au prochain démarrage."""
     n = 0
     try:
-        # Si les routes officielles ont disparu, re-seed obligatoire
+        # Force la migration de schéma (ALTER TABLE pour les colonnes
+        # ajoutées, dont `official` qui peut manquer sur DB historique).
+        db.init_schema()
         if not force and hasattr(db, "count_official_routes"):
             if db.count_official_routes() > 0:
-                return 0  # déjà OK, rien à faire
+                return 0
         from app.seed_db import (
             seed_amazone_waypoints, seed_canonical_routes,
             seed_dhc6_perf_refinements,
@@ -1655,15 +1650,20 @@ def _reset_to_blank_mission() -> None:
     _step_nav_footer()
 
 if page_idx == 1:
-    # Routes user-saved uniquement (exclut le catalogue officiel Amazone
-    # qui est consommé via auto-apply sur la page Legs).
-    tpl_rows = db.list_user_templates() if hasattr(db, "list_user_templates") else [
-        r for r in db.list_route_templates()
-        if not (r.keys() and "official" in r.keys() and r["official"])
-    ]
+    # Toutes les routes : user-saved + catalogue officiel. Permet à
+    # l'OPS de picker une mission catalogue (DBBB→DNAA Amazone) en 1
+    # click sans recréer from scratch. Catégorie normalisée pour grouper
+    # les routes officielles sous le bon dossier pays ("Bénin" plutôt
+    # que "AMAZONE — Bénin / DHC6 official" qui était long).
+    tpl_rows = db.list_route_templates()
     by_cat: dict[str, list] = {}
     for r in tpl_rows:
-        cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
+        raw_cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
+        # Normalise les catégories officielles vers leur dossier court
+        if "AMAZONE" in raw_cat.upper() and "BÉNIN" in raw_cat.upper():
+            cat = "Bénin"
+        else:
+            cat = raw_cat
         by_cat.setdefault(cat, []).append(r)
     cats = sorted(by_cat.keys())
 
@@ -2123,12 +2123,11 @@ if page_idx == 2:
 
 if page_idx == 3:
     st.caption(
-        "Missions sauvegardées par toi (manuellement via 💾 Enregistrer ou "
-        "auto-save à la génération DIC). Le catalogue officiel Amazone (routes "
-        "DBBB→DNAA etc.) n'apparaît pas ici — il est consommé automatiquement "
-        "en page Legs quand origin+destination matchent."
+        "Toutes les routes en base. Les routes **🔒 officielles** "
+        "(catalogue opérateur Amazone) sont protégées contre la suppression "
+        "et restent dispos dans le picker Mission de la page Legs."
     )
-    rows = db.list_user_templates() if hasattr(db, "list_user_templates") else db.list_route_templates()
+    rows = db.list_route_templates()
     if not rows:
         st.info("Aucune route en base. Génère une DIC ou clique 💾 Enregistrer "
                 "depuis la page Legs pour démarrer la bibliothèque.")
@@ -2150,8 +2149,10 @@ if page_idx == 3:
                         )
                     )
                     c1, c2, c3 = st.columns([5, 1, 1])
+                    is_official = "official" in r.keys() and r["official"]
                     with c1:
-                        st.markdown(f"**{r['name']}**")
+                        prefix = "🔒 " if is_official else ""
+                        st.markdown(f"{prefix}**{r['name']}**")
                         st.caption(f"`{summary}` · {len(legs_json)} leg(s)")
                     with c2:
                         if st.button("📂 Charger", key=f"hist_load_{r['id']}"):
@@ -2159,10 +2160,16 @@ if page_idx == 3:
                             _goto_page(1)
                             st.rerun()
                     with c3:
-                        if st.button("🗑️", key=f"hist_del_{r['id']}", help="Supprimer"):
-                            with db.connect() as c:
-                                c.execute("DELETE FROM route_template WHERE id = ?", (r["id"],))
-                            st.rerun()
+                        # Routes officielles : suppression désactivée pour
+                        # éviter de wiper le catalogue par erreur (re-seedé
+                        # auto au boot mais quand même).
+                        if is_official:
+                            st.caption("🔒 officielle")
+                        else:
+                            if st.button("🗑️", key=f"hist_del_{r['id']}", help="Supprimer"):
+                                with db.connect() as c:
+                                    c.execute("DELETE FROM route_template WHERE id = ?", (r["id"],))
+                                st.rerun()
 
     _step_nav_footer()
 
