@@ -372,13 +372,12 @@ def _apt_input(label: str, default: str, field_key: str) -> str:
     if len(raw) >= 2:
         suggestions = _search_airports(raw)[:6]
         if suggestions:
-            cols = st.columns(min(len(suggestions), 3))
+            st.caption(f"💡 **{len(suggestions)} suggestion(s)** — clique pour sélectionner :")
+            cols = st.columns(min(len(suggestions), 2))
             for i, (label_txt, icao) in enumerate(suggestions):
-                with cols[i % 3]:
-                    # Affichage compact : `LFPB · Le Bourget (FR)`
-                    short = label_txt.replace("**", "").split("·")[0].strip()
+                with cols[i % 2]:
                     full = label_txt.replace("**", "")
-                    if st.button(full, key=f"{field_key}_sug_{icao}", help=short):
+                    if st.button(full, key=f"{field_key}_sug_{icao}", width="stretch"):
                         st.session_state[f"{field_key}_pending"] = icao
                         st.rerun()
         elif raw:
@@ -1277,6 +1276,20 @@ if page_idx == 0:
     st.divider()
     st.subheader("Compagnie")
     selected_operator = _operator_picker("mission")
+    # Reset des sélecteurs dépendants quand on change de compagnie : sans
+    # ça, Streamlit garde l'aircraft / crew / POC du précédent opérateur
+    # même s'ils n'appartiennent plus à la nouvelle compagnie (selectbox
+    # value est sticky via session_state.key).
+    prev_op = st.session_state.get("_prev_mission_operator")
+    if prev_op != selected_operator:
+        for k in (
+            "mission_ap_sel", "mission_reg", "mission_type", "mission_cs",
+            "mission_crew_sel", "mission_cdb", "mission_fo",
+            "mission_poc_sel", "mission_poc_name", "mission_poc_phone",
+            "mission_poc_email_functional", "mission_poc_email_personal",
+        ):
+            st.session_state.pop(k, None)
+        st.session_state["_prev_mission_operator"] = selected_operator
     st.divider()
     st.subheader("Appareil")
     ap = _aircraft_picker("mission", operator=selected_operator)
@@ -1892,6 +1905,31 @@ if page_idx == 4:
         "Configuration et données opérationnelles. Ces sections n'impactent pas "
         "la génération du DIC tant que tu n'en as pas besoin."
     )
+
+    with st.expander("📥 Flotte type — import rapide", expanded=False):
+        st.markdown(
+            "Insère les appareils standards de la flotte (idempotent : "
+            "rejouable, ne crée pas de doublons grâce à l'unicité de "
+            "l'immatriculation)."
+        )
+        DEFAULT_FLEET = [
+            # (registration, type_icao, callsign, operator)
+            ("F-HJTA",   "DA62",  "HJTA",   "DYNAMI AVIATION OPS"),
+            ("TY-BAB",   "DHC6",  "TY-BAB", "AMAZONE AIRLINES / DYNAMI AVIATION OPS"),
+            ("7Q-YAE",   "L410",  "7QYAE",  "DYNAMI AVIATION OPS"),
+            ("F-WZNA",   "B190",  "FWZNA",  "DYNAMI AVIATION OPS"),
+            ("F-HSVA",   "A321",  "SVA21F", "SKYVISION"),
+        ]
+        if st.button("📥 Importer flotte type"):
+            inserted = 0
+            for reg, ty, cs, op in DEFAULT_FLEET:
+                db.save_aircraft(reg, ty, cs, op)
+                inserted += 1
+            st.success(
+                f"✅ {inserted} appareil(s) en base — dont l'A321F SkyVision "
+                f"(F-HSVA, cruise 447 kt, ceiling FL398, wake M)."
+            )
+            st.rerun()
 
     with st.expander("🛩️ Aérodromes opérationnels (sans ICAO)", expanded=True):
         st.markdown(
