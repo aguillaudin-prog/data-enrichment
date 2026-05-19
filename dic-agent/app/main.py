@@ -322,21 +322,43 @@ def _show_logged_in_user() -> None:
             badge = "🛡️ admin" if admin else "👤 user"
             st.caption(f"{badge} · **{email}**")
         else:
-            # Pas d'email détecté = dev local OU Cloud sans auth proxy
             st.caption("👤 _(pas d'auth détectée)_")
-        # Debug détaillé visible uniquement à l'admin (ou en dev)
-        if admin:
+        # Bouton debug visible pour tout le monde — pour diagnostiquer
+        # ce que Streamlit Cloud expose réellement.
+        with st.expander("🔬 Auth debug", expanded=False):
             try:
                 admin_email_secret = (st.secrets.get("ADMIN_EMAIL") or "").strip()
             except Exception:
                 admin_email_secret = "(error)"
-            with st.expander("🔬 Auth debug", expanded=False):
-                st.code(
-                    f"email détecté : {email!r}\n"
-                    f"ADMIN_EMAIL    : {admin_email_secret!r}\n"
-                    f"is_admin       : {admin}",
-                    language="text",
-                )
+            # Dump tout ce qu'on peut récupérer de st.user et st.experimental_user
+            user_dump = "—"
+            try:
+                if hasattr(st, "user"):
+                    attrs = {k: getattr(st.user, k, None) for k in dir(st.user) if not k.startswith("_")}
+                    user_dump = "\n".join(f"  st.user.{k} = {v!r}" for k, v in attrs.items())
+                else:
+                    user_dump = "  st.user : not available"
+            except Exception as e:
+                user_dump = f"  st.user : error {e}"
+            exp_dump = "—"
+            try:
+                if hasattr(st, "experimental_user"):
+                    attrs = {k: getattr(st.experimental_user, k, None) for k in dir(st.experimental_user) if not k.startswith("_")}
+                    exp_dump = "\n".join(f"  st.experimental_user.{k} = {v!r}" for k, v in attrs.items())
+                else:
+                    exp_dump = "  st.experimental_user : not available"
+            except Exception as e:
+                exp_dump = f"  st.experimental_user : error {e}"
+            import streamlit as _st_for_ver
+            st.code(
+                f"streamlit version : {_st_for_ver.__version__}\n"
+                f"email détecté     : {email!r}\n"
+                f"ADMIN_EMAIL secret: {admin_email_secret!r}\n"
+                f"is_admin          : {admin}\n\n"
+                f"st.user attrs :\n{user_dump}\n\n"
+                f"st.experimental_user attrs :\n{exp_dump}",
+                language="text",
+            )
 
 
 _show_logged_in_user()
