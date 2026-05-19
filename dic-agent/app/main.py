@@ -1722,6 +1722,32 @@ if "page_idx" not in st.session_state:
 # non-technical user always sees both the current step and how to advance.
 # Why not st.tabs: Streamlit's tab bar scrolls out of view on long forms,
 # and no reliable CSS makes it sticky across versions.
+if not _is_admin():
+    # Masque le badge "Manage app" et la chrome de déploiement Streamlit
+    # Cloud aux utilisateurs non-admin. Note : ce n'est PAS une sécurité
+    # (utilisateur curieux peut inspecter le DOM ou aller direct sur
+    # share.streamlit.io). Sans credentials Streamlit Cloud il ne pourra
+    # rien faire de toute façon. C'est juste cosmétique pour ne pas
+    # tenter l'OPS qui n'aurait rien à faire dans ces menus.
+    st.markdown(
+        """
+        <style>
+        /* Badge "Manage app" Streamlit Cloud — masqué aux non-admins */
+        .viewerBadge_container__1QSob,
+        .viewerBadge_link__qRIco,
+        .viewerBadge_text__1JaDK,
+        [data-testid="stDecoration"],
+        [data-testid="manage-app-button"],
+        [data-testid="stToolbar"] { display: none !important; }
+        /* Menu hamburger en haut à droite (Settings, Rerun, etc) */
+        #MainMenu { visibility: hidden !important; }
+        footer { visibility: hidden !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 _BASE_PAGES = [
     ("1.", "Mission & profils", "Avion, équipage, compagnie"),
     ("2.", "Legs", "Itinéraire, dates, route"),
