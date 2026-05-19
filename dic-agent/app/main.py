@@ -2353,15 +2353,28 @@ if page_idx == 2:
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Distance", f"{resolution.total_distance_nm:.0f} NM")
-        # Affiche temps corrigé seulement si le vent change le temps de >=10%
-        if wind_info and wind_info["available"] and abs(wind_info["delta_pct"]) >= 10:
-            c2.metric("Temps de vol", f"{wind_info['wind_adjusted_min']:.0f} min")
+        # Affichage vent toujours visible si la donnée est dispo :
+        # - delta >= 10 % : temps corrigé affiché, caption en gras (effet
+        #   opérationnel significatif)
+        # - delta <  10 % : temps still-air affiché, caption discrète
+        #   informative ("effet < 10 % conservé still-air")
+        # - vent indispo (API down, J+16) : pas de caption du tout
+        if wind_info and wind_info["available"]:
             kind = "headwind" if wind_info["headwind_kt"] >= 0 else "tailwind"
             sign = "+" if wind_info["headwind_kt"] >= 0 else "−"
-            c2.caption(
-                f"💨 Vent pris en compte ({kind} {sign}{abs(wind_info['headwind_kt']):.0f} kt · "
-                f"still-air était {wind_info['still_air_min']:.0f} min)"
-            )
+            hw_abs = abs(wind_info["headwind_kt"])
+            if abs(wind_info["delta_pct"]) >= 10:
+                c2.metric("Temps de vol", f"{wind_info['wind_adjusted_min']:.0f} min")
+                c2.caption(
+                    f"💨 **Vent significatif** : {kind} {sign}{hw_abs:.0f} kt · "
+                    f"still-air était {wind_info['still_air_min']:.0f} min"
+                )
+            else:
+                c2.metric("Temps de vol", f"{resolution.total_time_min:.0f} min")
+                c2.caption(
+                    f"💨 Vent : {kind} {sign}{hw_abs:.0f} kt · "
+                    f"effet < 10 % (still-air conservé)"
+                )
         else:
             c2.metric("Temps de vol", f"{resolution.total_time_min:.0f} min")
         c3.metric("Pays traversés", str(len(resolution.segments)))

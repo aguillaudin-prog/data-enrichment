@@ -214,6 +214,12 @@ def tokenize_route(route_text: str) -> list[str]:
     Strategy: first extract any lat/lon coordinate substrings (which contain
     spaces and slashes), replace them with single placeholders, split on
     whitespace/dashes/commas, then re-inject the coordinate tokens.
+
+    ICAO Item 15 supports "<WAYPOINT>/SLLLL" syntax for speed/level
+    changes at a fix (e.g. "ELEXI/N0138F080" = pass ELEXI at 138 kt FL080).
+    We strip the "/SLLLL" suffix to resolve the base waypoint; the speed/
+    level annotation is dropped (caller's responsibility to surface it
+    if needed).
     """
     if not route_text:
         return []
@@ -225,6 +231,10 @@ def tokenize_route(route_text: str) -> list[str]:
 
     cleaned = COORD_FINDER.sub(_stash, route_text)
     cleaned = cleaned.replace("-", " ").replace(",", " ")
+    # Pattern ICAO speed/level change : /SLLLL où S∈{N,M,K} + 4 chiffres
+    # + L∈{F,S,A,M} + 3 chiffres. Ex: /N0138F080, /M082F360, /K0900A050.
+    # On retire l'annotation pour garder le waypoint nu.
+    item15_annot_re = re.compile(r"/[NMK]\d{4}[FSAM]\d{3}\b", re.IGNORECASE)
     out: list[str] = []
     for raw in cleaned.split():
         raw = raw.strip()
@@ -234,6 +244,8 @@ def tokenize_route(route_text: str) -> list[str]:
             idx = int(raw[len("__COORD_") : -2])
             out.append(coords[idx].upper())
         else:
+            # Strip "/SLLLL" speed/level annotation si présente
+            raw = item15_annot_re.sub("", raw)
             out.append(raw.upper())
     return out
 
