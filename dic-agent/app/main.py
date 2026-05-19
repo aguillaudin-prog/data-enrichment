@@ -1735,6 +1735,7 @@ if page_idx == 0:
         "poc_email_functional": poc.get("email_functional", ""),
         "poc_fax": poc.get("fax", ""),
     }
+    _step_nav_footer()
 
 
 _NEW_MISSION_LABEL = "✨ Nouvelle mission"
@@ -1786,9 +1787,6 @@ def _reset_to_blank_mission() -> None:
          "date": dt.date.today(), "eobt_time": dt.time(0, 0), "route_text": ""}
     ]
     st.session_state.pop("_loaded_tpl_name", None)
-
-
-    _step_nav_footer()
 
 if page_idx == 1:
     # Picker Mission : on filtre pour ne montrer que des MISSIONS
