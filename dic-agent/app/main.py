@@ -2451,6 +2451,16 @@ if page_idx == 4:
                         st.error(f"❌ KO : {hc['error']}")
                 except Exception as e:
                     st.error(f"❌ Module : {e}")
+            if st.button("🔬 Diag secrets", key="admin_oa_debug",
+                         help="Affiche les clés top-level présentes dans st.secrets (valeurs masquées)"):
+                try:
+                    keys = list(st.secrets.keys())
+                    if keys:
+                        st.code("Clés top-level dans st.secrets :\n" + "\n".join(f"  - {k}" for k in keys))
+                    else:
+                        st.warning("st.secrets est vide.")
+                except Exception as e:
+                    st.error(f"Lecture impossible : {e}")
             st.caption(
                 "_(pénalise les zones militaires dans le route suggester. "
                 "Sans clé `OPENAIP_API_KEY` les routes restent calculées, "

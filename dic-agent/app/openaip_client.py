@@ -59,19 +59,43 @@ class OpenAIPError(RuntimeError):
 def _api_key() -> str:
     key = os.environ.get("OPENAIP_API_KEY", "").strip()
     if not key:
-        # Fallback Streamlit Cloud : les secrets sont exposés via
-        # st.secrets, pas via os.environ. On essaie cet accès si dispo
-        # (import paresseux pour ne pas dépendre de streamlit en CLI).
+        # Fallback Streamlit Cloud : essaie plusieurs emplacements
+        # possibles dans st.secrets selon comment l'OPS a structuré
+        # son fichier secrets.toml.
         try:
             import streamlit as _st
-            key = (_st.secrets.get("OPENAIP_API_KEY") or "").strip()
+            # 1. Top-level : OPENAIP_API_KEY = "..."
+            try:
+                v = _st.secrets["OPENAIP_API_KEY"]
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+            except (KeyError, FileNotFoundError, Exception):
+                pass
+            # 2. Section [openaip] avec api_key = "..."
+            try:
+                sec = _st.secrets["openaip"]
+                v = sec.get("api_key") or sec.get("OPENAIP_API_KEY") or sec.get("key")
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+            except (KeyError, FileNotFoundError, Exception):
+                pass
+            # 3. Minuscules au cas où
+            try:
+                v = _st.secrets["openaip_api_key"]
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+            except (KeyError, FileNotFoundError, Exception):
+                pass
         except Exception:
-            key = ""
+            pass
     if not key:
         raise OpenAIPError(
-            "OPENAIP_API_KEY missing. Local : copy .env.example to .env "
-            "and fill OPENAIP_API_KEY. Streamlit Cloud : add "
-            "OPENAIP_API_KEY = \"xxx\" in Settings → Secrets."
+            "OPENAIP_API_KEY missing. Cherché aux emplacements suivants :\n"
+            "  - env var OPENAIP_API_KEY (local : .env)\n"
+            '  - st.secrets["OPENAIP_API_KEY"] (Streamlit Cloud, top-level)\n'
+            '  - st.secrets["openaip"]["api_key"] (Streamlit Cloud, section)\n'
+            '  - st.secrets["openaip_api_key"] (Streamlit Cloud, lowercase)\n'
+            'Vérifie le format dans Streamlit Cloud → Settings → Secrets.'
         )
     return key
 
