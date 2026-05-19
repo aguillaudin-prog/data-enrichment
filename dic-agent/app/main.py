@@ -52,7 +52,16 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
                         "SELECT COUNT(*) FROM route_template "
                         "WHERE official = 1 AND variant = 'mission'"
                     ).fetchone()[0]
-                if n_missions >= 23 and hasattr(db, "count_official_routes") and db.count_official_routes() > 0:
+                    # Check du schéma de catégorie : on veut maintenant
+                    # toutes les missions sous "Amazone". Si certaines
+                    # sont encore sous Bénin/Cameroun/etc, on force le
+                    # re-seed pour appliquer le nouveau schéma.
+                    n_old_cats = c.execute(
+                        "SELECT COUNT(*) FROM route_template "
+                        "WHERE official = 1 AND variant = 'mission' "
+                        "AND category != 'Amazone'"
+                    ).fetchone()[0]
+                if n_missions >= 23 and n_old_cats == 0 and hasattr(db, "count_official_routes") and db.count_official_routes() > 0:
                     return 0  # schéma à jour, rien à faire
             except Exception:
                 pass
@@ -1810,11 +1819,28 @@ if page_idx == 1:
     by_cat: dict[str, list] = {}
     for r in tpl_rows:
         raw_cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
-        if "AMAZONE" in raw_cat.upper() and "BÉNIN" in raw_cat.upper():
-            cat = "Bénin"
+        # Normalisation : toutes les missions Amazone (anciennes
+        # catégories Bénin/Cameroun/Mauritanie/... ou nouvelle "Amazone")
+        # remontent sous un seul dossier "Amazone". Les routes user-saved
+        # gardent leur catégorie d'origine.
+        if raw_cat.upper().startswith("AMAZONE") or raw_cat in (
+            "Bénin", "Cameroun", "Mauritanie", "Côte d'Ivoire", "Sénégal-Guinée"
+        ):
+            cat = "Amazone"
         else:
             cat = raw_cat
         by_cat.setdefault(cat, []).append(r)
+    # Tri intra-dossier : missions Bénin (préfixe [BJ]) en tête, puis le
+    # reste alphabétique. Ça met le hub naturel de l'opérateur en premier.
+    def _mission_sort_key(r) -> tuple:
+        name = r["name"] or ""
+        # Priorité 0 si touche le Bénin (préfixe [BJ] ou DBBB/TOUROU dans le nom)
+        bj_first = 0 if (
+            "[BJ]" in name or "DBBB" in name or "TOUROU" in name
+        ) else 1
+        return (bj_first, name)
+    for cat in by_cat:
+        by_cat[cat].sort(key=_mission_sort_key)
     cats = sorted(by_cat.keys())
 
     # ────────────────────────────────────────────────────────────────────
