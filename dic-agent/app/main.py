@@ -384,59 +384,20 @@ def _admin_pin_prompt() -> None:
 
 
 def _show_logged_in_user() -> None:
-    """Affiche en sidebar l'email connecté + le statut admin. Aide à
-    diagnostiquer pourquoi un email se voit refuser l'accès Admin
-    (mismatch case, secret pas chargée, etc.)."""
-    email = _current_user_email()
+    """Sidebar : badge minimal indiquant l'état admin/user.
+    Affichage silencieux si pas de session auth + pas de PIN unlock
+    (= utilisateur normal, rien à afficher de plus que la nav)."""
     admin = _is_admin()
+    email = _current_user_email()
     with st.sidebar:
-        if email:
-            badge = "🛡️ admin" if admin else "👤 user"
-            st.caption(f"{badge} · **{email}**")
-        else:
-            st.caption("👤 _(pas d'auth détectée)_")
-        # Bouton debug visible pour tout le monde — pour diagnostiquer
-        # ce que Streamlit Cloud expose réellement.
-        with st.expander("🔬 Auth debug", expanded=False):
-            admin_email_secret = _get_secret_anywhere("ADMIN_EMAIL")
-            try:
-                top_level_keys = list(st.secrets.keys())
-            except Exception:
-                top_level_keys = []
-            # Dump tout ce qu'on peut récupérer de st.user et st.experimental_user
-            user_dump = "—"
-            try:
-                if hasattr(st, "user"):
-                    if hasattr(st.user, "to_dict"):
-                        d = st.user.to_dict()
-                        user_dump = f"  st.user.to_dict() = {d!r}"
-                    else:
-                        user_dump = f"  st.user = {dict(st.user)!r}"
-                else:
-                    user_dump = "  st.user : not available"
-            except Exception as e:
-                user_dump = f"  st.user : error {e}"
-            exp_dump = "—"
-            try:
-                if hasattr(st, "experimental_user"):
-                    attrs = {k: getattr(st.experimental_user, k, None) for k in dir(st.experimental_user) if not k.startswith("_")}
-                    exp_dump = "\n".join(f"  st.experimental_user.{k} = {v!r}" for k, v in attrs.items())
-                else:
-                    exp_dump = "  st.experimental_user : not available"
-            except Exception as e:
-                exp_dump = f"  st.experimental_user : error {e}"
-            import streamlit as _st_for_ver
-            st.code(
-                f"streamlit version : {_st_for_ver.__version__}\n"
-                f"email détecté     : {email!r}\n"
-                f"ADMIN_EMAIL secret: {admin_email_secret!r}\n"
-                f"  (scan top-level + toutes sub-sections)\n"
-                f"is_admin          : {admin}\n"
-                f"top-level secrets : {top_level_keys}\n\n"
-                f"st.user :\n{user_dump}\n\n"
-                f"st.experimental_user :\n{exp_dump}",
-                language="text",
-            )
+        if admin and email:
+            st.caption(f"🛡️ admin · **{email}**")
+        elif admin:
+            # Admin via PIN (le badge unlock est déjà géré dans _admin_pin_prompt)
+            pass
+        elif email:
+            st.caption(f"👤 user · **{email}**")
+        # else : silencieux (utilisateur sans auth visible, normal sur Cloud free)
 
 
 _show_logged_in_user()
