@@ -26,6 +26,33 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# CSS custom : renforce les borders des st.container(border=True) sur la
+# page Legs pour séparer plus nettement les blocs Leg N. Streamlit
+# applique aux containers une class "st-emotion-cache-*" instable, on
+# cible donc via data-testid="stContainer" + border attribute.
+st.markdown(
+    """
+    <style>
+    /* Conteneurs bordés (st.container(border=True)) : cadre plus marqué */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border: 2px solid #d0d4dc !important;
+        border-radius: 10px !important;
+        padding: 1rem !important;
+        margin-bottom: 1.2rem !important;
+        background-color: #fafbfc;
+    }
+    /* Headers h3 (### Leg N) : un peu plus gros + couleur d'accent */
+    div[data-testid="stVerticalBlockBorderWrapper"] h3 {
+        color: #1a4480;
+        margin-top: 0 !important;
+        padding-bottom: 0.3rem;
+        border-bottom: 1px solid #e0e4ec;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 def _ensure_amazone_data_seeded(force: bool = False) -> int:
     """Seed des données opérateur Amazone. Idempotent. Self-healing : si
@@ -110,7 +137,108 @@ def _fix_known_route_typos() -> int:
     return n_fixed
 
 
+def _cleanup_and_relabel_user_templates() -> int:
+    """Au boot Streamlit, nettoie les user-saved missions :
+
+    1. Supprime les doublons triviaux : 1-leg ou 2-leg user-saved dont
+       les (origin, destination) matchent un leg officiel Amazone — ces
+       entrées venaient d'auto-saves de l'ancien schéma et polluent
+       maintenant le picker.
+    2. Re-catégorise les user-saved restants (composites, tours
+       multi-mission) sous la catégorie "Amazone (saved)" pour les
+       grouper dans le même dossier que les officiels.
+    3. Annote leur nom avec les numéros de mission Amazone identifiés
+       pour chaque leg : "[13/1.x/9] DBBB → DIAP → DIBK → DIKO".
+
+    Idempotent : ne touche rien si le ménage est déjà fait.
+    """
+    n_deleted = 0
+    n_relabeled = 0
+    try:
+        with db.connect() as c:
+            cols = {r[1] for r in c.execute("PRAGMA table_info(route_template)").fetchall()}
+            if "official" not in cols or "variant" not in cols:
+                return 0
+            # Pull all official Amazone missions for matching
+            official = c.execute(
+                "SELECT name, legs_json FROM route_template "
+                "WHERE official = 1 AND variant = 'mission'"
+            ).fetchall()
+            # Index : (origin, destination) → liste de tuples (mission_num, leg_idx)
+            # mission_num extrait du nom : "[BJ] 13 — DBBB ↔ DNAA" → "13"
+            official_legs_idx: dict[tuple[str, str], list[str]] = {}
+            official_routes: list[tuple[str, list[tuple[str, str]]]] = []
+            import re as _re
+            for r in official:
+                try:
+                    legs = json.loads(r["legs_json"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                # Extrait le numéro de mission du nom
+                m = _re.search(r"\] (\d+(?:\.[A-Z])?)", r["name"] or "")
+                mission_num = m.group(1) if m else "?"
+                od_pairs = [
+                    ((leg.get("origin") or "").upper().strip(),
+                     (leg.get("destination") or "").upper().strip())
+                    for leg in (legs or []) if isinstance(leg, dict)
+                ]
+                official_routes.append((mission_num, od_pairs))
+                for od in od_pairs:
+                    official_legs_idx.setdefault(od, []).append(mission_num)
+
+            # User-saved missions
+            user_rows = c.execute(
+                "SELECT id, name, category, legs_json FROM route_template "
+                "WHERE official IS NULL OR official = 0"
+            ).fetchall()
+            for r in user_rows:
+                try:
+                    legs = json.loads(r["legs_json"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(legs, list) or not legs:
+                    continue
+                user_ods = [
+                    ((leg.get("origin") or "").upper().strip(),
+                     (leg.get("destination") or "").upper().strip())
+                    for leg in legs if isinstance(leg, dict)
+                ]
+                # 1. Doublon trivial : user_ods == legs d'un official
+                is_dup = any(user_ods == off_ods for _, off_ods in official_routes)
+                if is_dup:
+                    c.execute("DELETE FROM route_template WHERE id = ?", (r["id"],))
+                    n_deleted += 1
+                    continue
+                # 2-3. Re-categorize + annotate avec numéros Amazone matched
+                leg_nums = []
+                for od in user_ods:
+                    nums = official_legs_idx.get(od)
+                    leg_nums.append(nums[0] if nums else "?")
+                annot = "/".join(leg_nums) if leg_nums else ""
+                # Nouveau nom : "[13/1.A/9] DBBB → DIAP → DIBK → DIKO"
+                path = " → ".join([user_ods[0][0]] + [od[1] for od in user_ods])
+                new_name = f"[{annot}] {path}" if annot else path
+                new_cat = "Amazone (saved)"
+                if r["name"] != new_name or r["category"] != new_cat:
+                    try:
+                        c.execute(
+                            "UPDATE route_template SET name = ?, category = ? "
+                            "WHERE id = ?",
+                            (new_name, new_cat, r["id"]),
+                        )
+                        n_relabeled += 1
+                    except Exception:
+                        # Probable conflit UNIQUE(name) — on a déjà cette
+                        # entrée. Suppression silencieuse du doublon.
+                        c.execute("DELETE FROM route_template WHERE id = ?", (r["id"],))
+                        n_deleted += 1
+    except Exception:
+        pass
+    return n_deleted + n_relabeled
+
+
 _ensure_amazone_data_seeded()
+_cleanup_and_relabel_user_templates()
 
 
 def _show_logged_in_user() -> None:
