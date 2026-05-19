@@ -1138,6 +1138,17 @@ def _render_insert_after_leg(leg_idx: int, leg: dict) -> None:
                     matching.append((r["name"], sub_leg, sub_idx, len(rlegs)))
     except Exception:
         return
+    # Tri des suggestions :
+    # 1. Retour home (destination = DBBB ou TOUROU) en premier
+    # 2. Continuation vers un autre hub (DIAP, GUCY, GOBD, FKYS, etc.)
+    # 3. Variant 1.A / 1.B / 1.C dans cet ordre alphabétique
+    HOME_BASES = {"DBBB", "TOUROU"}
+    def _sug_key(item):
+        _name, _sub_leg, _idx, _n = item
+        sub_dest = (_sub_leg.get("destination") or "").upper()
+        is_home_return = 0 if sub_dest in HOME_BASES else 1
+        return (is_home_return, _name)
+    matching.sort(key=_sug_key)
     label = (
         f"➕ Insérer un leg après celui-ci"
         + (f" · {len(matching)} suggestion(s) Amazone depuis {dest}" if matching else "")
@@ -1154,11 +1165,12 @@ def _render_insert_after_leg(leg_idx: int, leg: dict) -> None:
             }
             st.rerun()
         for name, sub_leg, sub_idx, n_legs in matching:
-            # Label : "3.A leg 2/2 · GUCY → DIAP"
             short_name = name.split(" / ", 1)[-1] if " / " in name else name
+            sub_dest = (sub_leg.get("destination") or "").upper()
+            home_marker = " 🏠" if sub_dest in HOME_BASES else ""
             label_btn = (
                 f"📌 {short_name} leg {sub_idx + 1}/{n_legs} · "
-                f"{sub_leg['origin']} → {sub_leg['destination']}"
+                f"{sub_leg['origin']} → {sub_leg['destination']}{home_marker}"
             )
             if st.button(
                 label_btn, key=f"ins_mis_{leg_idx}_{name}_{sub_idx}_{_legs_sid()}",
@@ -1166,6 +1178,7 @@ def _render_insert_after_leg(leg_idx: int, leg: dict) -> None:
                     f"Insère ce leg de la mission. "
                     f"Route : {sub_leg.get('route_text', '?')}. "
                     f"Alt : {sub_leg.get('alternate', '?')}."
+                    + (" · Retour vers la base." if sub_dest in HOME_BASES else "")
                 ),
             ):
                 st.session_state["_pending_insert_leg"] = {
@@ -1409,26 +1422,29 @@ def _leg_editor(idx: int, leg: dict) -> dict:
         except Exception:
             alt_candidates = []
         if alt_candidates:
-            st.caption(
-                f"📍 **{len(alt_candidates)} alternate(s) suggéré(s)** "
-                f"pour {destination} dans 250 NM, perf {ac_type or 'aéronef'} OK :"
-            )
-            cols = st.columns(min(len(alt_candidates), 5))
-            for i, ap in enumerate(alt_candidates):
-                with cols[i]:
-                    dist_nm = db._haversine_nm(
-                        float(db.find_airport(destination)["lat"]),
-                        float(db.find_airport(destination)["lon"]),
-                        float(ap["lat"]), float(ap["lon"]),
-                    )
-                    label = f"{ap['icao']}\n{ap['name'][:18]}\n{dist_nm:.0f} NM"
-                    if st.button(
-                        label, key=f"{kprefix}_alt_{ap['icao']}",
-                        help=f"{ap['name']} — rwy max {ap['max_runway_ft'] or '?'} ft",
-                        width="stretch",
-                    ):
-                        st.session_state[f"{kprefix}_pending_alt"] = ap["icao"]
-                        st.rerun()
+            # Suggestions cachées par défaut pour réduire le bruit visuel.
+            # L'OPS qui veut changer d'alternate déplie ; sinon la valeur
+            # auto-suggérée reste appliquée sans le mur de boutons.
+            with st.expander(
+                f"📍 {len(alt_candidates)} alternates compatibles dans 250 NM",
+                expanded=False,
+            ):
+                cols = st.columns(min(len(alt_candidates), 5))
+                for i, ap in enumerate(alt_candidates):
+                    with cols[i]:
+                        dist_nm = db._haversine_nm(
+                            float(db.find_airport(destination)["lat"]),
+                            float(db.find_airport(destination)["lon"]),
+                            float(ap["lat"]), float(ap["lon"]),
+                        )
+                        label = f"{ap['icao']}\n{ap['name'][:18]}\n{dist_nm:.0f} NM"
+                        if st.button(
+                            label, key=f"{kprefix}_alt_{ap['icao']}",
+                            help=f"{ap['name']} — rwy max {ap['max_runway_ft'] or '?'} ft",
+                            width="stretch",
+                        ):
+                            st.session_state[f"{kprefix}_pending_alt"] = ap["icao"]
+                            st.rerun()
 
     msg = st.session_state.pop(f"_pending_suggest_msg_{sid}_{idx}", None)
     if msg:
