@@ -230,16 +230,15 @@ def _cleanup_and_relabel_user_templates() -> int:
                     c.execute("DELETE FROM route_template WHERE id = ?", (r["id"],))
                     n_deleted += 1
                     continue
-                # 2-3. Re-categorize + annotate avec numéros Amazone matched
-                leg_nums = []
-                for od in user_ods:
-                    nums = official_legs_idx.get(od)
-                    leg_nums.append(nums[0] if nums else "?")
-                annot = "/".join(leg_nums) if leg_nums else ""
-                # Nouveau nom : "[13/1.A/9] DBBB → DIAP → DIBK → DIKO"
+                # 2-3. Re-catégorise sous "Amazone" (même dossier que les
+                # officiels) + nom uniformisé "[Tour] PATH" pour rester
+                # cohérent avec le pattern "[BJ]/[CI]/..." des officiels.
+                # Les numéros de mission Amazone matched par leg vont en
+                # caption help via la colonne du picker (pas dans le nom
+                # pour ne pas le rendre illisible).
                 path = " → ".join([user_ods[0][0]] + [od[1] for od in user_ods])
-                new_name = f"[{annot}] {path}" if annot else path
-                new_cat = "Mes tours"
+                new_name = f"[Tour] {path}"
+                new_cat = "Amazone"
                 if r["name"] != new_name or r["category"] != new_cat:
                     try:
                         c.execute(
@@ -2137,16 +2136,15 @@ if page_idx == 1:
     by_cat: dict[str, list] = {}
     for r in tpl_rows:
         raw_cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
-        # Normalisation des catégories :
-        # - Officielles : toutes regroupées sous "Amazone" (les anciennes
-        #   "Bénin/Cameroun/..." héritées ou la nouvelle "Amazone").
-        # - User-saved : "Mes tours" pour les composites custom.
+        # Tout sous "Amazone" : officielles + tours user-saved (qui ont
+        # le préfixe [Tour] dans leur nom pour les distinguer dans la
+        # dropdown). Anciennes catégories Bénin/Cameroun/Mauritanie/...
+        # ou "Mes tours" récupérées sous le même dossier unifié.
         if raw_cat.upper() == "AMAZONE" or raw_cat in (
-            "Bénin", "Cameroun", "Mauritanie", "Côte d'Ivoire", "Sénégal-Guinée"
-        ):
+            "Bénin", "Cameroun", "Mauritanie", "Côte d'Ivoire", "Sénégal-Guinée",
+            "Mes tours",
+        ) or "saved" in raw_cat.lower():
             cat = "Amazone"
-        elif raw_cat == "Mes tours" or "saved" in raw_cat.lower():
-            cat = "Mes tours"
         else:
             cat = raw_cat
         by_cat.setdefault(cat, []).append(r)
@@ -2154,11 +2152,17 @@ if page_idx == 1:
     # reste alphabétique. Ça met le hub naturel de l'opérateur en premier.
     def _mission_sort_key(r) -> tuple:
         name = r["name"] or ""
-        # Priorité 0 si touche le Bénin (préfixe [BJ] ou DBBB/TOUROU dans le nom)
-        bj_first = 0 if (
-            "[BJ]" in name or "DBBB" in name or "TOUROU" in name
-        ) else 1
-        return (bj_first, name)
+        # Priorité 0 : tours user-saved (préfixe [Tour])
+        # Priorité 1 : missions officielles touchant Bénin ([BJ] ou
+        #              contenant DBBB/TOUROU)
+        # Priorité 2 : autres officielles ([CI], [SN/GN], [CM], [MR])
+        if "[Tour]" in name:
+            prio = 0
+        elif "[BJ]" in name or "DBBB" in name or "TOUROU" in name:
+            prio = 1
+        else:
+            prio = 2
+        return (prio, name)
     for cat in by_cat:
         by_cat[cat].sort(key=_mission_sort_key)
     cats = sorted(by_cat.keys())
