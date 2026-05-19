@@ -294,27 +294,50 @@ def _current_user_email() -> str | None:
     return None
 
 
-def _is_admin() -> bool:
-    """Admin = email matche st.secrets["ADMIN_EMAIL"].
+def _get_secret_anywhere(key: str) -> str:
+    """Cherche une secret à plusieurs emplacements dans st.secrets :
+    top-level, toutes sub-sections (TOML inheritance), case insensitive.
 
-    Détection stricte du contexte :
-    - Si on tourne sur Streamlit Cloud (= experimental_user existe avec
-      un email) : on EXIGE st.secrets["ADMIN_EMAIL"] et un match exact.
-      Pas de secret = pas d'admin. Pas de match = pas d'admin.
-    - Si on tourne en local sans auth (= experimental_user n'existe
-      pas) : tout le monde est admin pour faciliter le dev.
+    Évite le piège classique : une clé collée à la suite d'une section
+    [autorouter] se retrouve dans cette section au lieu d'être top-level.
+    """
+    try:
+        v = st.secrets.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    except Exception:
+        pass
+    try:
+        for sec_name in st.secrets.keys():
+            try:
+                sec = st.secrets[sec_name]
+                if not hasattr(sec, "get"):
+                    continue
+                for variant in (key, key.lower(), key.upper()):
+                    v = sec.get(variant)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return ""
+
+
+def _is_admin() -> bool:
+    """Admin = email matche st.secrets["ADMIN_EMAIL"] (à tout niveau).
+
+    Cherche ADMIN_EMAIL en top-level ET dans toutes les sub-sections
+    (au cas où la secret aurait été collée par erreur dans une section
+    [autorouter] ou autre, comme le piège TOML d'inheritance).
     """
     user_email = (_current_user_email() or "").strip().lower()
     if not user_email:
-        # Pas de session auth → dev local OU prod sans email visible.
-        # Par sécurité, on n'accorde pas l'admin sans email connu.
-        # Sauf si on est explicitement en dev (variable d'env).
+        # Pas de session auth → dev local. Admin uniquement si
+        # DIC_AGENT_DEV=1 explicite.
         import os as _os
         return _os.environ.get("DIC_AGENT_DEV", "").strip() == "1"
-    try:
-        admin_email = (st.secrets.get("ADMIN_EMAIL") or "").strip().lower()
-    except Exception:
-        admin_email = ""
+    admin_email = _get_secret_anywhere("ADMIN_EMAIL").lower()
     return bool(admin_email) and user_email == admin_email
 
 
@@ -333,10 +356,11 @@ def _show_logged_in_user() -> None:
         # Bouton debug visible pour tout le monde — pour diagnostiquer
         # ce que Streamlit Cloud expose réellement.
         with st.expander("🔬 Auth debug", expanded=False):
+            admin_email_secret = _get_secret_anywhere("ADMIN_EMAIL")
             try:
-                admin_email_secret = (st.secrets.get("ADMIN_EMAIL") or "").strip()
+                top_level_keys = list(st.secrets.keys())
             except Exception:
-                admin_email_secret = "(error)"
+                top_level_keys = []
             # Dump tout ce qu'on peut récupérer de st.user et st.experimental_user
             user_dump = "—"
             try:
@@ -364,9 +388,11 @@ def _show_logged_in_user() -> None:
                 f"streamlit version : {_st_for_ver.__version__}\n"
                 f"email détecté     : {email!r}\n"
                 f"ADMIN_EMAIL secret: {admin_email_secret!r}\n"
-                f"is_admin          : {admin}\n\n"
-                f"st.user attrs :\n{user_dump}\n\n"
-                f"st.experimental_user attrs :\n{exp_dump}",
+                f"  (scan top-level + toutes sub-sections)\n"
+                f"is_admin          : {admin}\n"
+                f"top-level secrets : {top_level_keys}\n\n"
+                f"st.user :\n{user_dump}\n\n"
+                f"st.experimental_user :\n{exp_dump}",
                 language="text",
             )
 
