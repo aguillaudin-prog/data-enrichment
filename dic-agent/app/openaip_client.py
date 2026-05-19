@@ -59,19 +59,16 @@ class OpenAIPError(RuntimeError):
 def _api_key() -> str:
     key = os.environ.get("OPENAIP_API_KEY", "").strip()
     if not key:
-        # Fallback Streamlit Cloud : essaie plusieurs emplacements
-        # possibles dans st.secrets selon comment l'OPS a structuré
-        # son fichier secrets.toml.
         try:
             import streamlit as _st
-            # 1. Top-level : OPENAIP_API_KEY = "..."
+            # 1. Top-level direct
             try:
                 v = _st.secrets["OPENAIP_API_KEY"]
                 if isinstance(v, str) and v.strip():
                     return v.strip()
             except (KeyError, FileNotFoundError, Exception):
                 pass
-            # 2. Section [openaip] avec api_key = "..."
+            # 2. Section [openaip]
             try:
                 sec = _st.secrets["openaip"]
                 v = sec.get("api_key") or sec.get("OPENAIP_API_KEY") or sec.get("key")
@@ -79,12 +76,28 @@ def _api_key() -> str:
                     return v.strip()
             except (KeyError, FileNotFoundError, Exception):
                 pass
-            # 3. Minuscules au cas où
+            # 3. Lowercase top-level
             try:
                 v = _st.secrets["openaip_api_key"]
                 if isinstance(v, str) and v.strip():
                     return v.strip()
             except (KeyError, FileNotFoundError, Exception):
+                pass
+            # 4. Scan défensif : la clé peut avoir été pastée par erreur
+            # dans n'importe quelle section (ex: inside [autorouter]).
+            # On parcourt toutes les sub-sections pour OPENAIP_API_KEY.
+            try:
+                for sec_name in _st.secrets.keys():
+                    try:
+                        sec = _st.secrets[sec_name]
+                        if not hasattr(sec, "get"):
+                            continue
+                        v = sec.get("OPENAIP_API_KEY") or sec.get("openaip_api_key")
+                        if isinstance(v, str) and v.strip():
+                            return v.strip()
+                    except Exception:
+                        continue
+            except Exception:
                 pass
         except Exception:
             pass
@@ -92,10 +105,12 @@ def _api_key() -> str:
         raise OpenAIPError(
             "OPENAIP_API_KEY missing. Cherché aux emplacements suivants :\n"
             "  - env var OPENAIP_API_KEY (local : .env)\n"
-            '  - st.secrets["OPENAIP_API_KEY"] (Streamlit Cloud, top-level)\n'
-            '  - st.secrets["openaip"]["api_key"] (Streamlit Cloud, section)\n'
-            '  - st.secrets["openaip_api_key"] (Streamlit Cloud, lowercase)\n'
-            'Vérifie le format dans Streamlit Cloud → Settings → Secrets.'
+            '  - st.secrets["OPENAIP_API_KEY"] (top-level)\n'
+            '  - st.secrets["openaip"]["api_key" | "key" | "OPENAIP_API_KEY"]\n'
+            '  - st.secrets["openaip_api_key"] (lowercase)\n'
+            '  - st.secrets[any_section]["OPENAIP_API_KEY"] (scan defensif)\n'
+            'Place la ligne `OPENAIP_API_KEY = "..."` en TÊTE du fichier secrets '
+            '(avant la première section [autorouter] ou autres).'
         )
     return key
 
