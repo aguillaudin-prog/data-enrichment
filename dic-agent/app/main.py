@@ -26,31 +26,39 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# CSS custom : renforce les borders des st.container(border=True) sur la
-# page Legs pour séparer plus nettement les blocs Leg N.
+# CSS custom — renforce les containers bordés des legs.
+# Streamlit change ses sélecteurs data-testid entre versions. On cible
+# plusieurs variants connus pour maximiser la chance de match.
 st.markdown(
     """
     <style>
-    /* Conteneurs bordés (st.container(border=True)) : cadre épais
-       + accent bleu à gauche + ombre subtile pour effet "carte" */
-    div[data-testid="stVerticalBlockBorderWrapper"] {
-        border: 1px solid #c8d0db !important;
-        border-left: 5px solid #2563eb !important;
-        border-radius: 8px !important;
-        padding: 1.2rem 1.4rem !important;
-        margin-bottom: 1.6rem !important;
+    /* TOUS les sélecteurs Streamlit qui correspondent à un container
+       avec border=True selon la version */
+    div[data-testid="stVerticalBlockBorderWrapper"],
+    div[data-testid="stVerticalBlock"][style*="border"],
+    div[data-testid="stContainer"][style*="border"],
+    section[data-testid="stContainer"][style*="border"],
+    .stContainer[style*="border"],
+    div[class*="VerticalBlockBorderWrapper"] {
+        border: 1.5px solid #c8d0db !important;
+        border-left: 6px solid #2563eb !important;
+        border-radius: 10px !important;
+        padding: 1.4rem 1.6rem !important;
+        margin: 0.4rem 0 1.8rem 0 !important;
         background-color: #ffffff !important;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06),
-                    0 0 0 1px rgba(0, 0, 0, 0.02);
+        box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08),
+                    0 1px 3px rgba(15, 23, 42, 0.04) !important;
     }
-    /* Headers h3 ("### Leg N") plus saillants */
-    div[data-testid="stVerticalBlockBorderWrapper"] h3 {
+    /* Headers ### dans les containers : très saillants */
+    div[data-testid="stVerticalBlockBorderWrapper"] h3,
+    div[data-testid="stVerticalBlock"][style*="border"] h3,
+    div[class*="VerticalBlockBorderWrapper"] h3 {
         color: #1e3a8a !important;
-        margin-top: 0 !important;
-        margin-bottom: 0.6rem !important;
-        padding-bottom: 0.4rem !important;
+        margin: 0 0 0.8rem 0 !important;
+        padding-bottom: 0.5rem !important;
         border-bottom: 2px solid #dbeafe !important;
         font-weight: 700 !important;
+        font-size: 1.25rem !important;
     }
     </style>
     """,
@@ -231,7 +239,7 @@ def _cleanup_and_relabel_user_templates() -> int:
                 # Nouveau nom : "[13/1.A/9] DBBB → DIAP → DIBK → DIKO"
                 path = " → ".join([user_ods[0][0]] + [od[1] for od in user_ods])
                 new_name = f"[{annot}] {path}" if annot else path
-                new_cat = "Amazone (saved)"
+                new_cat = "Mes tours"
                 if r["name"] != new_name or r["category"] != new_cat:
                     try:
                         c.execute(
@@ -266,20 +274,27 @@ def _current_user_email() -> str | None:
 
 
 def _is_admin() -> bool:
-    """Admin = email matche st.secrets["ADMIN_EMAIL"]. Si la secret
-    n'est pas définie (dev local sans auth), tout le monde est admin.
+    """Admin = email matche st.secrets["ADMIN_EMAIL"].
 
-    En prod Streamlit Cloud : déclarer la secret :
-        ADMIN_EMAIL = "ton.email@example.org"
+    Détection stricte du contexte :
+    - Si on tourne sur Streamlit Cloud (= experimental_user existe avec
+      un email) : on EXIGE st.secrets["ADMIN_EMAIL"] et un match exact.
+      Pas de secret = pas d'admin. Pas de match = pas d'admin.
+    - Si on tourne en local sans auth (= experimental_user n'existe
+      pas) : tout le monde est admin pour faciliter le dev.
     """
+    user_email = (_current_user_email() or "").strip().lower()
+    if not user_email:
+        # Pas de session auth → dev local OU prod sans email visible.
+        # Par sécurité, on n'accorde pas l'admin sans email connu.
+        # Sauf si on est explicitement en dev (variable d'env).
+        import os as _os
+        return _os.environ.get("DIC_AGENT_DEV", "").strip() == "1"
     try:
         admin_email = (st.secrets.get("ADMIN_EMAIL") or "").strip().lower()
     except Exception:
         admin_email = ""
-    if not admin_email:
-        return True  # dev mode : pas de restriction
-    user_email = (_current_user_email() or "").strip().lower()
-    return bool(user_email) and user_email == admin_email
+    return bool(admin_email) and user_email == admin_email
 
 
 def _show_logged_in_user() -> None:
@@ -2033,14 +2048,16 @@ if page_idx == 1:
     by_cat: dict[str, list] = {}
     for r in tpl_rows:
         raw_cat = r["category"] if "category" in r.keys() and r["category"] else "Autres"
-        # Normalisation : toutes les missions Amazone (anciennes
-        # catégories Bénin/Cameroun/Mauritanie/... ou nouvelle "Amazone")
-        # remontent sous un seul dossier "Amazone". Les routes user-saved
-        # gardent leur catégorie d'origine.
-        if raw_cat.upper().startswith("AMAZONE") or raw_cat in (
+        # Normalisation des catégories :
+        # - Officielles : toutes regroupées sous "Amazone" (les anciennes
+        #   "Bénin/Cameroun/..." héritées ou la nouvelle "Amazone").
+        # - User-saved : "Mes tours" pour les composites custom.
+        if raw_cat.upper() == "AMAZONE" or raw_cat in (
             "Bénin", "Cameroun", "Mauritanie", "Côte d'Ivoire", "Sénégal-Guinée"
         ):
             cat = "Amazone"
+        elif raw_cat == "Mes tours" or "saved" in raw_cat.lower():
+            cat = "Mes tours"
         else:
             cat = raw_cat
         by_cat.setdefault(cat, []).append(r)
