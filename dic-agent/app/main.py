@@ -325,20 +325,62 @@ def _get_secret_anywhere(key: str) -> str:
 
 
 def _is_admin() -> bool:
-    """Admin = email matche st.secrets["ADMIN_EMAIL"] (à tout niveau).
+    """Admin = (email matche ADMIN_EMAIL) OU (PIN entré correct).
 
-    Cherche ADMIN_EMAIL en top-level ET dans toutes les sub-sections
-    (au cas où la secret aurait été collée par erreur dans une section
-    [autorouter] ou autre, comme le piège TOML d'inheritance).
+    Streamlit Cloud free-tier ne pousse pas l'email vers l'app (st.user
+    retourne {}), donc l'ADMIN_EMAIL match seul ne suffit pas dans
+    cette config. On ajoute un fallback PIN : si l'utilisateur entre
+    le bon PIN (st.secrets["ADMIN_PIN"]) dans la sidebar, il est
+    marqué admin pour la session.
     """
+    # 1. Path natif : email connu + match ADMIN_EMAIL
     user_email = (_current_user_email() or "").strip().lower()
-    if not user_email:
-        # Pas de session auth → dev local. Admin uniquement si
-        # DIC_AGENT_DEV=1 explicite.
-        import os as _os
-        return _os.environ.get("DIC_AGENT_DEV", "").strip() == "1"
-    admin_email = _get_secret_anywhere("ADMIN_EMAIL").lower()
-    return bool(admin_email) and user_email == admin_email
+    if user_email:
+        admin_email = _get_secret_anywhere("ADMIN_EMAIL").lower()
+        if admin_email and user_email == admin_email:
+            return True
+    # 2. Path PIN : session unlock via PIN entré dans sidebar
+    if st.session_state.get("_admin_unlocked"):
+        return True
+    # 3. Dev local explicite via env var
+    import os as _os
+    if _os.environ.get("DIC_AGENT_DEV", "").strip() == "1":
+        return True
+    return False
+
+
+def _admin_pin_prompt() -> None:
+    """Petit champ PIN en bas de sidebar. Si le PIN entré matche
+    st.secrets["ADMIN_PIN"], débloque le mode admin pour la session.
+
+    Affiché uniquement si le PIN n'est PAS encore débloqué (sinon on
+    montre juste 🛡️ Admin déverrouillé).
+    """
+    if st.session_state.get("_admin_unlocked"):
+        with st.sidebar:
+            cols = st.columns([3, 1])
+            cols[0].caption("🛡️ Mode admin actif")
+            if cols[1].button("🚪", key="admin_lock", help="Déverrouiller"):
+                st.session_state.pop("_admin_unlocked", None)
+                st.rerun()
+        return
+    secret_pin = _get_secret_anywhere("ADMIN_PIN")
+    if not secret_pin:
+        return  # pas de PIN configuré → pas d'affichage
+    with st.sidebar:
+        st.divider()
+        pin = st.text_input(
+            "🔐 PIN admin",
+            type="password", key="_admin_pin_input",
+            placeholder="…",
+            help="Entre le PIN défini dans Streamlit Secrets (ADMIN_PIN) pour accéder à l'admin.",
+        )
+        if pin and pin.strip() == secret_pin.strip():
+            st.session_state["_admin_unlocked"] = True
+            st.success("✅ Admin déverrouillé")
+            st.rerun()
+        elif pin:
+            st.error("❌ PIN incorrect")
 
 
 def _show_logged_in_user() -> None:
@@ -398,6 +440,7 @@ def _show_logged_in_user() -> None:
 
 
 _show_logged_in_user()
+_admin_pin_prompt()
 
 DB_FILE = Path(__file__).resolve().parent.parent / "data" / "dic.sqlite"
 if not DB_FILE.exists():
