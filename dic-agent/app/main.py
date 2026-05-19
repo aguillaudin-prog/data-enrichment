@@ -1182,6 +1182,26 @@ def _render_pre_dic_checklist(mission: dict, legs: list[dict]) -> bool:
     # Dédupe au niveau mission des alertes "préavis trop court"
     # (un même pays touché par plusieurs legs → 1 seule alerte).
     lead_time_alerts: set = set()
+    # NOTAMs critiques aux aéros de la mission. Lus depuis le cache
+    # _briefing_data (rempli par le bouton "🌤️ Charger" en Preview).
+    # Si pas chargé, pas de check NOTAM (silencieux, l'OPS n'a pas
+    # explicitement demandé le briefing).
+    critical_notams_by_icao: dict[str, list] = {}
+    try:
+        bdata = st.session_state.get("_briefing_data") or {}
+        # Liste plate des NOTAMs (rempli par le bouton "🌤️ Charger").
+        # On reconstruit par ICAO via le champ `itema` du NOTAM.
+        from app import autorouter_client as _ar
+        for n in (bdata.get("notams") or []):
+            if not _ar.is_critical_notam(n):
+                continue
+            for ic in (n.itema or []):
+                ic_u = (ic or "").strip().upper()
+                if ic_u:
+                    critical_notams_by_icao.setdefault(ic_u, []).append(n)
+    except Exception:
+        pass
+
     for i, leg in enumerate(valid_legs):
         ltag = f"Leg {i + 1}"
         eobt = leg.get("eobt")
@@ -1222,6 +1242,26 @@ def _render_pre_dic_checklist(mission: dict, legs: list[dict]) -> bool:
                         f"{lead} j, il reste {days_until} j avant ton "
                         f"EOBT → dépôt à risque, négocier en urgence."
                     )
+        # NOTAMs critiques aux aéros de ce leg (origin, destination,
+        # alternate). Affichés en orange — l'OPS doit lire et juger.
+        leg_icaos = []
+        for icao in (leg.get("origin"), leg.get("destination"), leg.get("alternate")):
+            ic = (icao or "").strip().upper()
+            if ic and ic not in leg_icaos:
+                leg_icaos.append(ic)
+        notam_alerts_emitted = set()
+        for ic in leg_icaos:
+            for n in critical_notams_by_icao.get(ic, []):
+                key = (ic, n.id)
+                if key in notam_alerts_emitted:
+                    continue
+                notam_alerts_emitted.add(key)
+                try:
+                    summary = autorouter_client.summarize_notam(n)
+                except Exception:
+                    summary = f"#{n.id}"
+                oranges.append(f"NOTAM critique **{ic}** : {summary}")
+
         # Slot Eurocontrol CTOT : si origin ou destination en Europe
         # (FIR L*/E*), préavis recommandé 2-3 h avant EOBT pour slot
         # via CFMU. Caption info seulement (pas bloquant).

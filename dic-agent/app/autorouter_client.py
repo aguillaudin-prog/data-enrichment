@@ -947,6 +947,39 @@ def _decode_notam_row(row: dict) -> NotamRow:
     )
 
 
+def is_critical_notam(n: NotamRow) -> bool:
+    """Détecte un NOTAM opérationnellement critique (runway closure,
+    unserviceability, restricted airspace active, etc.).
+
+    Critères :
+    - purpose contient 'O' (Operationally significant per ICAO 7920)
+    - iteme contient mot-clé bloquant (CLSD, CLOSED, U/S, UNSERV, WIP)
+    - scope == 'A' (aérodrome) ET concerne piste/équipement
+    """
+    iteme_upper = (n.iteme or "").upper()
+    purpose_upper = (n.purpose or "").upper()
+    # Mots-clés bloquants opérationnels
+    BLOCKING_KEYWORDS = (
+        "CLSD", "CLOSED",
+        "U/S", "UNSERVICEABLE", "UNSERV",
+        "WIP", "WORK IN PROGRESS",
+        "PROHIBITED", "RESTRICTED ACTIVE",
+        "RWY ", "RUNWAY ",  # à filtrer plus finement avec contexte
+    )
+    has_blocking = any(kw in iteme_upper for kw in BLOCKING_KEYWORDS)
+    is_op_significant = "O" in purpose_upper
+    return has_blocking or is_op_significant
+
+
+def summarize_notam(n: NotamRow, max_chars: int = 100) -> str:
+    """Renvoie un résumé court d'un NOTAM (1 ligne) pour les alertes."""
+    body = (n.iteme or "").strip()
+    body = body.replace("\n", " ").replace("  ", " ")
+    if len(body) > max_chars:
+        body = body[:max_chars - 3] + "..."
+    return f"{n.notam_id} · {body}"
+
+
 def fetch_notams(
     cfg: AutorouterConfig,
     icaos: list[str],

@@ -120,6 +120,24 @@ CREATE TABLE IF NOT EXISTS country (
     geom_geojson TEXT
 );
 
+-- Holding patterns publiés (depuis X-Plane earth_hold.dat). Décrit
+-- l'attente sur un fix : cap d'entrée, durée/distance des branches,
+-- vitesse max, niveaux mini/maxi, sens de virage.
+CREATE TABLE IF NOT EXISTS holding_pattern (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fix_ident TEXT NOT NULL,
+    fix_region TEXT,
+    inbound_course REAL,
+    leg_time_min REAL,
+    leg_dist_nm REAL,
+    max_speed_kt INTEGER,
+    lower_alt_ft INTEGER,
+    upper_alt_ft INTEGER,
+    turn_direction TEXT,
+    UNIQUE(fix_ident, fix_region, inbound_course)
+);
+CREATE INDEX IF NOT EXISTS idx_holding_fix ON holding_pattern(fix_ident);
+
 -- Délai de préavis diplomatique pour obtenir une DIC (Diplomatic
 -- Clearance) avant le survol/atterrissage d'un pays. Référence pour
 -- alerter l'OPS si le dépôt est trop tardif vs l'EOBT.
@@ -349,6 +367,44 @@ def runway_length_ft(icao: str, ident: str) -> int | None:
 def count_runways() -> int:
     with connect() as c:
         return c.execute("SELECT COUNT(*) FROM runway").fetchone()[0]
+
+
+def upsert_holdings(rows: Iterable[dict]) -> int:
+    """Idempotent upsert sur holding_pattern. Conflit clé (ident, region,
+    course) → update les autres champs."""
+    sql = (
+        "INSERT INTO holding_pattern "
+        "(fix_ident, fix_region, inbound_course, leg_time_min, leg_dist_nm, "
+        " max_speed_kt, lower_alt_ft, upper_alt_ft, turn_direction) "
+        "VALUES (:fix_ident, :fix_region, :inbound_course, :leg_time_min, "
+        " :leg_dist_nm, :max_speed_kt, :lower_alt_ft, :upper_alt_ft, "
+        " :turn_direction) "
+        "ON CONFLICT(fix_ident, fix_region, inbound_course) DO UPDATE SET "
+        "  leg_time_min = excluded.leg_time_min, "
+        "  leg_dist_nm = excluded.leg_dist_nm, "
+        "  max_speed_kt = excluded.max_speed_kt, "
+        "  lower_alt_ft = excluded.lower_alt_ft, "
+        "  upper_alt_ft = excluded.upper_alt_ft, "
+        "  turn_direction = excluded.turn_direction"
+    )
+    n = 0
+    with connect() as c:
+        for r in rows:
+            try:
+                c.execute(sql, r)
+                n += 1
+            except sqlite3.Error:
+                continue
+    return n
+
+
+def find_holdings_at(fix_ident: str) -> list[sqlite3.Row]:
+    with connect() as c:
+        return c.execute(
+            "SELECT * FROM holding_pattern WHERE fix_ident = ? "
+            "ORDER BY fix_region, inbound_course",
+            (fix_ident.upper().strip(),),
+        ).fetchall()
 
 
 def get_lead_time_days(country_iso: str) -> int | None:

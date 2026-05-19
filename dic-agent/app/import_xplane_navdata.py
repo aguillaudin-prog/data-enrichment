@@ -263,12 +263,56 @@ def import_airways(path: Path) -> int:
     return total
 
 
+def import_holdings(path: Path) -> int:
+    """Parse earth_hold.dat (X-Plane CIFP-derived). Format ARINC 424 :
+
+      <fix_ident> <region> <area> <inbound_course> <leg_time_min>
+      <leg_dist_nm> <max_speed_kt> <lower_alt_ft> <upper_alt_ft> <turn_dir>
+
+    Exemple :
+      ABTAL EG ENRT 058.50 1.00 0.00 220 0 36000 R
+
+    Skip les lignes header (version + cycle date sur 2 premières lignes)
+    et toute ligne avec moins de 9 colonnes.
+    """
+    rows: list[dict] = []
+    with path.open("r", encoding="utf-8", errors="ignore") as f:
+        for line_no, raw in enumerate(f):
+            line = raw.strip()
+            if not line or line.startswith("I ") or line == "99":
+                continue
+            # Skip header lines
+            if line_no < 3 and (line.startswith("1100") or line.startswith("1140")
+                                or "Version" in line or "Cycle" in line):
+                continue
+            parts = line.split()
+            if len(parts) < 9:
+                continue
+            try:
+                row = {
+                    "fix_ident": parts[0].upper(),
+                    "fix_region": parts[1].upper(),
+                    "inbound_course": float(parts[3]),
+                    "leg_time_min": float(parts[4]),
+                    "leg_dist_nm": float(parts[5]),
+                    "max_speed_kt": int(float(parts[6])),
+                    "lower_alt_ft": int(float(parts[7])),
+                    "upper_alt_ft": int(float(parts[8])),
+                    "turn_direction": parts[9].upper() if len(parts) > 9 else None,
+                }
+            except (ValueError, IndexError):
+                continue
+            rows.append(row)
+    return db.upsert_holdings(rows) if rows else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", type=Path, help="Folder containing earth_fix.dat / earth_nav.dat / earth_awy.dat")
     ap.add_argument("--fixes", type=Path)
     ap.add_argument("--navaids", type=Path)
     ap.add_argument("--airways", type=Path)
+    ap.add_argument("--holds", type=Path, help="Path to earth_hold.dat")
     ap.add_argument(
         "--clean-first", action="store_true",
         help="Drop all rows from airway_segment before importing. Use when a previous "
@@ -279,8 +323,9 @@ def main(argv: list[str] | None = None) -> int:
     fixes_path = args.fixes or (args.dir / "earth_fix.dat" if args.dir else None)
     navaids_path = args.navaids or (args.dir / "earth_nav.dat" if args.dir else None)
     airways_path = args.airways or (args.dir / "earth_awy.dat" if args.dir else None)
+    holds_path = args.holds or (args.dir / "earth_hold.dat" if args.dir else None)
 
-    if not any([fixes_path, navaids_path, airways_path]):
+    if not any([fixes_path, navaids_path, airways_path, holds_path]):
         print("Pass --dir <folder> OR individual --fixes/--navaids/--airways paths.")
         return 1
 
@@ -311,6 +356,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  airway segments upserted: {n}")
     elif airways_path:
         print(f"  (skip airways — file not found: {airways_path})")
+
+    if holds_path and holds_path.exists():
+        print(f"→ Importing holdings from {holds_path}…")
+        n = import_holdings(holds_path)
+        print(f"  holdings upserted: {n}")
+    elif holds_path:
+        print(f"  (skip holdings — file not found: {holds_path})")
 
     print(f"\nTotal airway segments in DB now: {db.count_airway_segments()}")
     return 0
