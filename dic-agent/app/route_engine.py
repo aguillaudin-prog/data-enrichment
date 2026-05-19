@@ -29,6 +29,10 @@ from app import db
 EARTH_NM = 3440.065  # nautical miles per radian
 
 AIRWAY_RE = re.compile(r"^[A-Z]{1,2}\d{1,4}$")  # G851, UG851, L433, V377…
+# SID / STAR procedure names: 3-5 letters (exit fix) + 1-2 digits (rev)
+# + 1 letter (runway variant). Examples: TRETS8N, BIRGO3D, DORDI6C,
+# RLP9E, MENKU1G, MUS5G. Distinct from airways (different shape).
+SID_STAR_RE = re.compile(r"^[A-Z]{3,5}\d{1,2}[A-Z]$")
 
 # Coord pattern, either embedded in a route_text or as a single token after gluing.
 COORD_PATTERN = (
@@ -158,6 +162,13 @@ def _resolve_token(
     if AIRWAY_RE.match(token):
         return ResolvedPoint(label=token, lat=None, lon=None, source="airway")
 
+    # SID / STAR procedure name : pas un waypoint nu, on garde le
+    # label tel quel dans la route sans tenter de résoudre des coords.
+    # Évite les warnings "Point inconnu" injustifiés pour TRETS8N,
+    # BIRGO3D, DORDI6C, MENKU1G, RLP9E, etc.
+    if SID_STAR_RE.match(token):
+        return ResolvedPoint(label=token, lat=None, lon=None, source="procedure")
+
     # Skip 1- and 2-letter tokens — they are almost always noise from import
     # (single letters left over from airway splits like 'G 851', shorthand
     # like 'AD'). The proximity filter would catch most of them anyway, but
@@ -282,7 +293,10 @@ def resolve_route(
 
     for tok in tokenize_route(route_text):
         rp = _resolve_token(tok, region_hint, near_pt=last_geo, max_nm_from_near=max_nm)
-        if rp.source == "airway":
+        # Tokens sans coord (airway nom ou SID/STAR procedure name) ne
+        # comptent pas dans le chemin géographique. On les ignore pour
+        # le calcul mais l'affichage les conserve via tokenize_route.
+        if rp.source in ("airway", "procedure"):
             continue
         points.append(rp)
         if rp.lat is not None and rp.lon is not None:
