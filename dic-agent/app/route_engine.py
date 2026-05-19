@@ -162,10 +162,16 @@ def _resolve_token(
     if AIRWAY_RE.match(token):
         return ResolvedPoint(label=token, lat=None, lon=None, source="airway")
 
-    # SID / STAR procedure name : pas un waypoint nu, on garde le
-    # label tel quel dans la route sans tenter de résoudre des coords.
+    # SID / STAR / APPCH procedure : DB authoritative first (le catalog
+    # CIFP a 94k+ procédures), puis fallback heuristique sur pattern.
     # Évite les warnings "Point inconnu" injustifiés pour TRETS8N,
-    # BIRGO3D, DORDI6C, MENKU1G, RLP9E, etc.
+    # BIRGO3D, DORDI6C, MENKU1G, RLP9E, etc. + évite les faux positifs
+    # sur des waypoints qui ressemblent par hasard à des SID names.
+    try:
+        if db.find_procedure_by_name(token):
+            return ResolvedPoint(label=token, lat=None, lon=None, source="procedure")
+    except Exception:
+        pass
     if SID_STAR_RE.match(token):
         return ResolvedPoint(label=token, lat=None, lon=None, source="procedure")
 

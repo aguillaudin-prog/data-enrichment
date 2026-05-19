@@ -2404,6 +2404,11 @@ if page_idx == 2:
     date_range_min = None
     date_range_max = None
 
+    # Perf appareil pour le profil vertical (climb gradient)
+    _mis = st.session_state.get("mission") or {}
+    mission_ac_type = (_mis.get("aircraft_type_icao") or "").strip().upper()
+    ac_perf = db.find_aircraft_type(mission_ac_type) if mission_ac_type else None
+
     for i, leg in enumerate(st.session_state.legs):
         if not leg.get("origin") or not leg.get("destination"):
             continue
@@ -2512,6 +2517,25 @@ if page_idx == 2:
             _render_leg_map(resolution, leg)
         except Exception as e:
             st.caption(f"_(carte indisponible : {type(e).__name__})_")
+
+        # Profil vertical : terrain (Open-Topodata) + ligne de vol
+        # (climb/cruise/descent calculés depuis aircraft.climb_gradient_pct).
+        # Si pas de réseau ou plotly absent, on dégrade silencieusement.
+        try:
+            from app import vertical_profile
+            climb_grad = 5.0  # défaut générique si pas de perf appareil
+            if ac_perf and ac_perf["climb_gradient_pct"]:
+                climb_grad = float(ac_perf["climb_gradient_pct"])
+            fig = vertical_profile.build_vertical_profile(
+                resolution,
+                cruise_fl=int(leg.get("fl", 90)),
+                climb_grad_pct=climb_grad,
+                leg_label=f"Leg {i + 1} — {leg.get('origin', '?')} → {leg.get('destination', '?')}",
+            )
+            if fig is not None:
+                st.plotly_chart(fig, width="stretch")
+        except Exception:
+            pass
 
         rows_view = []
         for seg in resolution.segments:

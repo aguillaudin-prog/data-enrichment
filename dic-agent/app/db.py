@@ -914,6 +914,20 @@ def upsert_procedures(rows: Iterable[dict]) -> int:
     return n
 
 
+def find_procedure_by_name(proc_name: str) -> sqlite3.Row | None:
+    """Cherche une procédure (SID/STAR/APPCH) par son nom exact dans
+    n'importe quel aéroport. Utilisé par le route_engine pour valider
+    qu'un token est une vraie procédure publiée (et pas un waypoint
+    qui ressemble par hasard à un pattern SID)."""
+    if not proc_name:
+        return None
+    with connect() as c:
+        return c.execute(
+            "SELECT * FROM procedure WHERE proc_name = ? LIMIT 1",
+            (proc_name.strip().upper(),),
+        ).fetchone()
+
+
 def list_procedures(airport_icao: str, proc_type: str | None = None) -> list[sqlite3.Row]:
     with connect() as c:
         if proc_type:
