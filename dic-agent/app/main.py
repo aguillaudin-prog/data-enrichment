@@ -2476,6 +2476,37 @@ if page_idx == 2:
             c2.metric("Temps de vol", f"{resolution.total_time_min:.0f} min")
         c3.metric("Pays traversés", str(len(resolution.segments)))
 
+        # MORA (Minimum Off-Route Altitude) — terrain max + 1000 ft
+        # buffer, arrondi au 100 ft supérieur. Comparé au FL de croisière
+        # pour valider la sécurité terrain. Lecture silent-fail si
+        # Open-Topodata down.
+        try:
+            from app import terrain_client
+            mora_pts = [
+                (p.lat, p.lon) for p in (resolution.points or [])
+                if p.lat is not None and p.lon is not None
+            ]
+            if len(mora_pts) >= 2:
+                mora_info = terrain_client.compute_mora_for_leg(mora_pts)
+                if mora_info["available"]:
+                    mora_fl = mora_info["mora_ft"] / 100
+                    cruise_fl = int(leg.get("fl", 0))
+                    if cruise_fl > 0 and cruise_fl < mora_fl:
+                        st.error(
+                            f"⚠️ **MORA FL{int(mora_fl):03d}** (terrain "
+                            f"max {mora_info['max_terrain_ft']} ft + 1000 ft) "
+                            f"> cruise FL{cruise_fl:03d} — **terrain au-dessus "
+                            f"de la croisière**, monte au-dessus de FL{int(mora_fl):03d}."
+                        )
+                    else:
+                        st.caption(
+                            f"⛰️ MORA = FL{int(mora_fl):03d} "
+                            f"(terrain max {mora_info['max_terrain_ft']} ft "
+                            f"+ 1000 ft buffer · {mora_info['n_samples']} samples)"
+                        )
+        except Exception:
+            pass
+
         # Carte visuelle de la route (origine + destination + waypoints + alt)
         try:
             _render_leg_map(resolution, leg)
@@ -2928,6 +2959,36 @@ if page_idx == 3 and _is_admin():
                 "_(pénalise les zones militaires dans le route suggester. "
                 "Sans clé `OPENAIP_API_KEY` les routes restent calculées, "
                 "juste sans cette pénalisation.)_"
+            )
+        # 2e rangée : Open-Topodata pour la MORA terrain
+        st.divider()
+        c4, c5, _ = st.columns(3)
+        with c4:
+            st.markdown("**Open-Topodata** _(terrain MORA)_")
+            if st.button("🔍 Tester Open-Topodata", key="admin_otd_test"):
+                try:
+                    from app import terrain_client
+                    hc = terrain_client.health_check()
+                    if hc["ok"]:
+                        st.success(f"✅ OK ({hc['latency_ms']} ms)")
+                    else:
+                        st.error(f"❌ KO : {hc['error']}")
+                except Exception as e:
+                    st.error(f"❌ Module : {e}")
+            try:
+                from app import terrain_client
+                ls = terrain_client.get_last_status()
+                if ls["ok"] is None:
+                    st.caption("_(aucun appel depuis le boot)_")
+                elif ls["ok"]:
+                    st.caption(f"✓ dernier appel OK · {ls['last_check'].strftime('%H:%M:%SZ') if ls['last_check'] else '?'}")
+                else:
+                    st.caption(f"⚠️ dernier appel KO · {ls.get('error', '?')}")
+            except Exception:
+                pass
+            st.caption(
+                "_(SRTM 30m global, calcul MORA = terrain max + 1000 ft. "
+                "Cache local 24h.)_"
             )
 
     with st.expander("📥 Flotte type — import rapide", expanded=False):
