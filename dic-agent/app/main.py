@@ -263,23 +263,30 @@ _cleanup_and_relabel_user_templates()
 
 
 def _current_user_email() -> str | None:
-    """Email de l'utilisateur connecté via Streamlit Cloud, ou None
-    en mode dev local sans auth. Supporte les 2 APIs Streamlit :
-    - `st.user` (Streamlit 1.32+, recommandé)
-    - `st.experimental_user` (plus ancien, déprécié mais encore présent)
+    """Email de l'utilisateur connecté via Streamlit Cloud, ou None.
+
+    Streamlit 1.57 expose `st.user` comme un `UserInfoProxy` Mapping-like.
+    On accède via `.get("email")` ou `.to_dict().get("email")`, PAS via
+    getattr direct (qui ne renvoie que les méthodes du proxy).
     """
-    # 1. API moderne st.user
+    # 1. st.user (Mapping-like dans Streamlit 1.32+)
     try:
         if hasattr(st, "user"):
-            email = getattr(st.user, "email", None)
+            # to_dict() est le contrat propre pour récupérer les claims
+            data = st.user.to_dict() if hasattr(st.user, "to_dict") else dict(st.user)
+            email = data.get("email") if isinstance(data, dict) else None
             if email:
                 return email
     except Exception:
         pass
-    # 2. Fallback API expérimentale
+    # 2. Fallback API expérimentale (anciennes versions Streamlit)
     try:
         if hasattr(st, "experimental_user"):
-            email = getattr(st.experimental_user, "email", None)
+            ex = st.experimental_user
+            data = ex.to_dict() if hasattr(ex, "to_dict") else None
+            email = (data or {}).get("email") if isinstance(data, dict) else None
+            if not email:
+                email = getattr(ex, "email", None)
             if email:
                 return email
     except Exception:
@@ -334,8 +341,11 @@ def _show_logged_in_user() -> None:
             user_dump = "—"
             try:
                 if hasattr(st, "user"):
-                    attrs = {k: getattr(st.user, k, None) for k in dir(st.user) if not k.startswith("_")}
-                    user_dump = "\n".join(f"  st.user.{k} = {v!r}" for k, v in attrs.items())
+                    if hasattr(st.user, "to_dict"):
+                        d = st.user.to_dict()
+                        user_dump = f"  st.user.to_dict() = {d!r}"
+                    else:
+                        user_dump = f"  st.user = {dict(st.user)!r}"
                 else:
                     user_dump = "  st.user : not available"
             except Exception as e:
