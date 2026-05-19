@@ -264,12 +264,26 @@ _cleanup_and_relabel_user_templates()
 
 def _current_user_email() -> str | None:
     """Email de l'utilisateur connecté via Streamlit Cloud, ou None
-    en mode dev local sans auth."""
+    en mode dev local sans auth. Supporte les 2 APIs Streamlit :
+    - `st.user` (Streamlit 1.32+, recommandé)
+    - `st.experimental_user` (plus ancien, déprécié mais encore présent)
+    """
+    # 1. API moderne st.user
+    try:
+        if hasattr(st, "user"):
+            email = getattr(st.user, "email", None)
+            if email:
+                return email
+    except Exception:
+        pass
+    # 2. Fallback API expérimentale
     try:
         if hasattr(st, "experimental_user"):
-            return getattr(st.experimental_user, "email", None)
+            email = getattr(st.experimental_user, "email", None)
+            if email:
+                return email
     except Exception:
-        return None
+        pass
     return None
 
 
@@ -298,18 +312,31 @@ def _is_admin() -> bool:
 
 
 def _show_logged_in_user() -> None:
-    """L'auth est gérée par Streamlit Community Cloud (Settings → Sharing →
-    Only specific people, allowlist d'emails Google). Streamlit injecte
-    l'email de l'utilisateur connecté dans st.experimental_user — on
-    l'affiche en sidebar pour confirmer qui est en session. Pas d'appel
-    requis si l'allowlist n'est pas activée (mode dev local)."""
-    try:
-        email = getattr(st.experimental_user, "email", None) if hasattr(st, "experimental_user") else None
-    except Exception:
-        email = None
-    if email:
-        with st.sidebar:
-            st.caption(f"👤 Connecté : **{email}**")
+    """Affiche en sidebar l'email connecté + le statut admin. Aide à
+    diagnostiquer pourquoi un email se voit refuser l'accès Admin
+    (mismatch case, secret pas chargée, etc.)."""
+    email = _current_user_email()
+    admin = _is_admin()
+    with st.sidebar:
+        if email:
+            badge = "🛡️ admin" if admin else "👤 user"
+            st.caption(f"{badge} · **{email}**")
+        else:
+            # Pas d'email détecté = dev local OU Cloud sans auth proxy
+            st.caption("👤 _(pas d'auth détectée)_")
+        # Debug détaillé visible uniquement à l'admin (ou en dev)
+        if admin:
+            try:
+                admin_email_secret = (st.secrets.get("ADMIN_EMAIL") or "").strip()
+            except Exception:
+                admin_email_secret = "(error)"
+            with st.expander("🔬 Auth debug", expanded=False):
+                st.code(
+                    f"email détecté : {email!r}\n"
+                    f"ADMIN_EMAIL    : {admin_email_secret!r}\n"
+                    f"is_admin       : {admin}",
+                    language="text",
+                )
 
 
 _show_logged_in_user()
