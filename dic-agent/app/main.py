@@ -27,26 +27,30 @@ st.set_page_config(
 )
 
 # CSS custom : renforce les borders des st.container(border=True) sur la
-# page Legs pour séparer plus nettement les blocs Leg N. Streamlit
-# applique aux containers une class "st-emotion-cache-*" instable, on
-# cible donc via data-testid="stContainer" + border attribute.
+# page Legs pour séparer plus nettement les blocs Leg N.
 st.markdown(
     """
     <style>
-    /* Conteneurs bordés (st.container(border=True)) : cadre plus marqué */
+    /* Conteneurs bordés (st.container(border=True)) : cadre épais
+       + accent bleu à gauche + ombre subtile pour effet "carte" */
     div[data-testid="stVerticalBlockBorderWrapper"] {
-        border: 2px solid #d0d4dc !important;
-        border-radius: 10px !important;
-        padding: 1rem !important;
-        margin-bottom: 1.2rem !important;
-        background-color: #fafbfc;
+        border: 1px solid #c8d0db !important;
+        border-left: 5px solid #2563eb !important;
+        border-radius: 8px !important;
+        padding: 1.2rem 1.4rem !important;
+        margin-bottom: 1.6rem !important;
+        background-color: #ffffff !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06),
+                    0 0 0 1px rgba(0, 0, 0, 0.02);
     }
-    /* Headers h3 (### Leg N) : un peu plus gros + couleur d'accent */
+    /* Headers h3 ("### Leg N") plus saillants */
     div[data-testid="stVerticalBlockBorderWrapper"] h3 {
-        color: #1a4480;
+        color: #1e3a8a !important;
         margin-top: 0 !important;
-        padding-bottom: 0.3rem;
-        border-bottom: 1px solid #e0e4ec;
+        margin-bottom: 0.6rem !important;
+        padding-bottom: 0.4rem !important;
+        border-bottom: 2px solid #dbeafe !important;
+        font-weight: 700 !important;
     }
     </style>
     """,
@@ -79,16 +83,25 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
                         "SELECT COUNT(*) FROM route_template "
                         "WHERE official = 1 AND variant = 'mission'"
                     ).fetchone()[0]
-                    # Check du schéma de catégorie : on veut maintenant
-                    # toutes les missions sous "Amazone". Si certaines
-                    # sont encore sous Bénin/Cameroun/etc, on force le
-                    # re-seed pour appliquer le nouveau schéma.
                     n_old_cats = c.execute(
                         "SELECT COUNT(*) FROM route_template "
                         "WHERE official = 1 AND variant = 'mission' "
                         "AND category != 'Amazone'"
                     ).fetchone()[0]
-                if n_missions >= 23 and n_old_cats == 0 and hasattr(db, "count_official_routes") and db.count_official_routes() > 0:
+                    # Détection format ancien des noms : si un mission a
+                    # encore "(maritime" ou "(Abuja)" dans son nom, on
+                    # force le re-seed pour appliquer le format uniformisé.
+                    n_old_names = c.execute(
+                        "SELECT COUNT(*) FROM route_template "
+                        "WHERE official = 1 AND variant = 'mission' "
+                        "AND (name LIKE '%(maritime%' OR name LIKE '%(Abuja)%' "
+                        "OR name LIKE '%(Minna)%' OR name LIKE '%(Ilorin)%' "
+                        "OR name LIKE '%(overflight%' OR name LIKE '%(techstop %' "
+                        "OR name LIKE '%(évitement%' OR name LIKE '%Yaoundé%')"
+                    ).fetchone()[0]
+                if (n_missions >= 23 and n_old_cats == 0 and n_old_names == 0
+                        and hasattr(db, "count_official_routes")
+                        and db.count_official_routes() > 0):
                     return 0  # schéma à jour, rien à faire
             except Exception:
                 pass
@@ -239,6 +252,34 @@ def _cleanup_and_relabel_user_templates() -> int:
 
 _ensure_amazone_data_seeded()
 _cleanup_and_relabel_user_templates()
+
+
+def _current_user_email() -> str | None:
+    """Email de l'utilisateur connecté via Streamlit Cloud, ou None
+    en mode dev local sans auth."""
+    try:
+        if hasattr(st, "experimental_user"):
+            return getattr(st.experimental_user, "email", None)
+    except Exception:
+        return None
+    return None
+
+
+def _is_admin() -> bool:
+    """Admin = email matche st.secrets["ADMIN_EMAIL"]. Si la secret
+    n'est pas définie (dev local sans auth), tout le monde est admin.
+
+    En prod Streamlit Cloud : déclarer la secret :
+        ADMIN_EMAIL = "ton.email@example.org"
+    """
+    try:
+        admin_email = (st.secrets.get("ADMIN_EMAIL") or "").strip().lower()
+    except Exception:
+        admin_email = ""
+    if not admin_email:
+        return True  # dev mode : pas de restriction
+    user_email = (_current_user_email() or "").strip().lower()
+    return bool(user_email) and user_email == admin_email
 
 
 def _show_logged_in_user() -> None:
@@ -1681,13 +1722,16 @@ if "page_idx" not in st.session_state:
 # non-technical user always sees both the current step and how to advance.
 # Why not st.tabs: Streamlit's tab bar scrolls out of view on long forms,
 # and no reliable CSS makes it sticky across versions.
-PAGES = [
+_BASE_PAGES = [
     ("1.", "Mission & profils", "Avion, équipage, compagnie"),
     ("2.", "Legs", "Itinéraire, dates, route"),
     ("3.", "Preview & export", "Récapitulatif des legs, validation, puis export .docx + FPL + briefing"),
-    ("📋", "Historique", "Missions enregistrées, routes en base"),
-    ("⚙", "Admin", "Aérodromes hors ICAO, API autorouter, config"),
 ]
+_ADMIN_PAGE = ("⚙", "Admin", "Historique + APIs + données opérationnelles (admin seulement)")
+# Admin reste invisible aux utilisateurs non-admin (st.secrets ADMIN_EMAIL).
+# Historique a migré dans Admin (= section sous expander), n'est plus une
+# page autonome. Page count fluctue donc selon le profil utilisateur.
+PAGES = _BASE_PAGES + ([_ADMIN_PAGE] if _is_admin() else [])
 
 
 def _goto_page(idx: int) -> None:
@@ -2484,64 +2528,69 @@ if page_idx == 2:
     _step_nav_footer()
 
 
-if page_idx == 3:
-    st.caption(
-        "Toutes les routes en base. Les routes **🔒 officielles** "
-        "(catalogue opérateur Amazone) sont protégées contre la suppression "
-        "et restent dispos dans le picker Mission de la page Legs."
-    )
+def _render_historique_section() -> None:
+    """Bloc Historique des routes en base — utilisé comme expander
+    dans la page Admin. Permet à l'OPS admin de gérer ses templates
+    sauvegardés et de voir le catalogue officiel."""
     rows = db.list_route_templates()
     if not rows:
-        st.info("Aucune route en base. Génère une DIC ou clique 💾 Enregistrer "
-                "depuis la page Legs pour démarrer la bibliothèque.")
-    else:
-        # Group by category (dossier pays). Tri pour mettre les plus récents
-        # en premier dans chaque dossier — l'id auto-incrément joue ce rôle.
-        from collections import defaultdict
-        by_cat: dict[str, list] = defaultdict(list)
-        for r in rows:
-            by_cat[r["category"] or "Divers"].append(r)
-        st.caption(f"**{len(rows)} route(s)** réparties sur **{len(by_cat)} dossier(s)**.")
-        for cat in sorted(by_cat):
-            with st.expander(f"📁 {cat}  ({len(by_cat[cat])} route(s))", expanded=False):
-                for r in sorted(by_cat[cat], key=lambda x: x["id"], reverse=True):
-                    legs_json = json.loads(r["legs_json"])
-                    summary = " → ".join(
-                        dict.fromkeys(
-                            [legs_json[0]["origin"]] + [l["destination"] for l in legs_json]
-                        )
+        st.info(
+            "Aucune route en base. Génère une DIC ou clique sur "
+            "« 📋 Placer cette route dans l'historique » en page Legs "
+            "pour démarrer la bibliothèque."
+        )
+        return
+    from collections import defaultdict
+    by_cat: dict[str, list] = defaultdict(list)
+    for r in rows:
+        by_cat[r["category"] or "Divers"].append(r)
+    st.caption(
+        f"**{len(rows)} route(s)** réparties sur **{len(by_cat)} dossier(s)**. "
+        f"Les routes **🔒 officielles** (catalogue Amazone) sont protégées."
+    )
+    for cat in sorted(by_cat):
+        with st.expander(f"📁 {cat}  ({len(by_cat[cat])} route(s))", expanded=False):
+            for r in sorted(by_cat[cat], key=lambda x: x["id"], reverse=True):
+                legs_json = json.loads(r["legs_json"])
+                summary = " → ".join(
+                    dict.fromkeys(
+                        [legs_json[0]["origin"]] + [l["destination"] for l in legs_json]
                     )
-                    c1, c2, c3 = st.columns([5, 1, 1])
-                    is_official = "official" in r.keys() and r["official"]
-                    with c1:
-                        prefix = "🔒 " if is_official else ""
-                        st.markdown(f"{prefix}**{r['name']}**")
-                        st.caption(f"`{summary}` · {len(legs_json)} leg(s)")
-                    with c2:
-                        if st.button("📂 Charger", key=f"hist_load_{r['id']}"):
-                            _apply_template(r["name"], rows)
-                            _goto_page(1)
+                )
+                c1, c2, c3 = st.columns([5, 1, 1])
+                is_official = "official" in r.keys() and r["official"]
+                with c1:
+                    prefix = "🔒 " if is_official else ""
+                    st.markdown(f"{prefix}**{r['name']}**")
+                    st.caption(f"`{summary}` · {len(legs_json)} leg(s)")
+                with c2:
+                    if st.button("📂 Charger", key=f"hist_load_{r['id']}"):
+                        _apply_template(r["name"], rows)
+                        _goto_page(1)
+                        st.rerun()
+                with c3:
+                    if is_official:
+                        st.caption("🔒 officielle")
+                    else:
+                        if st.button("🗑️", key=f"hist_del_{r['id']}", help="Supprimer"):
+                            with db.connect() as c:
+                                c.execute("DELETE FROM route_template WHERE id = ?", (r["id"],))
                             st.rerun()
-                    with c3:
-                        # Routes officielles : suppression désactivée pour
-                        # éviter de wiper le catalogue par erreur (re-seedé
-                        # auto au boot mais quand même).
-                        if is_official:
-                            st.caption("🔒 officielle")
-                        else:
-                            if st.button("🗑️", key=f"hist_del_{r['id']}", help="Supprimer"):
-                                with db.connect() as c:
-                                    c.execute("DELETE FROM route_template WHERE id = ?", (r["id"],))
-                                st.rerun()
-
-    _step_nav_footer()
 
 
-if page_idx == 4:
+# Page Admin (anciennement page_idx == 4, maintenant 3 car Historique
+# n'est plus une page autonome). Gate sur _is_admin() : si l'utilisateur
+# courant n'est pas listé dans st.secrets["ADMIN_EMAIL"], pas d'accès.
+if page_idx == 3 and _is_admin():
     st.caption(
         "Configuration et données opérationnelles. Ces sections n'impactent pas "
         "la génération du DIC tant que tu n'en as pas besoin."
     )
+
+    # Historique des routes en base — migré ici depuis l'ancienne page
+    # dédiée. Accessible uniquement aux admins maintenant.
+    with st.expander("📋 Historique missions / routes en base", expanded=False):
+        _render_historique_section()
 
     # Statut des APIs externes — un coup d'œil rapide pour savoir si
     # quelque chose est cassé côté upstream.
