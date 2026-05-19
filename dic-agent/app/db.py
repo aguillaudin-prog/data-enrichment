@@ -120,6 +120,15 @@ CREATE TABLE IF NOT EXISTS country (
     geom_geojson TEXT
 );
 
+-- Délai de préavis diplomatique pour obtenir une DIC (Diplomatic
+-- Clearance) avant le survol/atterrissage d'un pays. Référence pour
+-- alerter l'OPS si le dépôt est trop tardif vs l'EOBT.
+CREATE TABLE IF NOT EXISTS diplomatic_lead_time (
+    country_iso TEXT PRIMARY KEY,
+    lead_time_days INTEGER NOT NULL,
+    notes TEXT
+);
+
 CREATE TABLE IF NOT EXISTS procedure (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     airport_icao TEXT NOT NULL,
@@ -340,6 +349,37 @@ def runway_length_ft(icao: str, ident: str) -> int | None:
 def count_runways() -> int:
     with connect() as c:
         return c.execute("SELECT COUNT(*) FROM runway").fetchone()[0]
+
+
+def get_lead_time_days(country_iso: str) -> int | None:
+    """Retourne le délai de préavis DIC en jours pour un pays, ou None
+    si pas en base (= pas de pré-requis connu, ne pas alerter)."""
+    if not country_iso:
+        return None
+    with connect() as c:
+        row = c.execute(
+            "SELECT lead_time_days FROM diplomatic_lead_time WHERE country_iso = ?",
+            (country_iso.upper().strip(),),
+        ).fetchone()
+    return int(row["lead_time_days"]) if row else None
+
+
+def upsert_lead_times(rows: Iterable[dict]) -> int:
+    """Upsert (country_iso → lead_time_days). Format des rows :
+    {"country_iso": "BJ", "lead_time_days": 5, "notes": "Bénin"}."""
+    sql = (
+        "INSERT INTO diplomatic_lead_time (country_iso, lead_time_days, notes) "
+        "VALUES (:country_iso, :lead_time_days, :notes) "
+        "ON CONFLICT(country_iso) DO UPDATE SET "
+        "  lead_time_days = excluded.lead_time_days, "
+        "  notes = excluded.notes"
+    )
+    n = 0
+    with connect() as c:
+        for r in rows:
+            c.execute(sql, r)
+            n += 1
+    return n
 
 
 def upsert_countries(rows: Iterable[dict]) -> int:

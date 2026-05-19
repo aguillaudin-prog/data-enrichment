@@ -110,16 +110,26 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
                 if (n_missions >= 23 and n_old_cats == 0 and n_old_names == 0
                         and hasattr(db, "count_official_routes")
                         and db.count_official_routes() > 0):
-                    return 0  # schéma à jour, rien à faire
+                    # Missions OK mais on seed quand même les lead times
+                    # (peuvent être ajoutés/édités après que les missions
+                    # soient déjà à jour).
+                    try:
+                        from app.seed_db import seed_diplomatic_lead_times
+                        seed_diplomatic_lead_times()
+                    except Exception:
+                        pass
+                    return 0  # schéma à jour
             except Exception:
                 pass
         from app.seed_db import (
             seed_amazone_waypoints, seed_canonical_routes,
             seed_dhc6_perf_refinements, seed_amazone_missions,
+            seed_diplomatic_lead_times,
         )
         n += seed_amazone_waypoints()
         n += seed_canonical_routes()
         n += seed_amazone_missions()
+        n += seed_diplomatic_lead_times()
         seed_dhc6_perf_refinements()
     except Exception:
         pass
@@ -1169,6 +1179,9 @@ def _render_pre_dic_checklist(mission: dict, legs: list[dict]) -> bool:
         reds.append("Aucun leg complet (origine + destination).")
     now = _dt.datetime.now(_dt.timezone.utc)
     idx_cache = country_index_cached()
+    # Dédupe au niveau mission des alertes "préavis trop court"
+    # (un même pays touché par plusieurs legs → 1 seule alerte).
+    lead_time_alerts: set = set()
     for i, leg in enumerate(valid_legs):
         ltag = f"Leg {i + 1}"
         eobt = leg.get("eobt")
@@ -1184,6 +1197,50 @@ def _render_pre_dic_checklist(mission: dict, legs: list[dict]) -> bool:
                 f"{ltag} : EOBT < 24 h du présent — la plupart des pays "
                 f"exigent 5-14 jours de préavis pour une DIC."
             )
+        # Check délais préavis par pays touchés par ce leg (origin + dest).
+        # Pas de check si EOBT déjà passé.
+        if eobt >= now and hasattr(db, "get_lead_time_days"):
+            days_until = max(0, (eobt - now).days)
+            for icao in (leg.get("origin"), leg.get("destination")):
+                if not icao:
+                    continue
+                ap = db.find_airport(icao)
+                if not ap:
+                    continue
+                iso = (ap["country_iso"] or "").upper()
+                if not iso or iso in lead_time_alerts:
+                    continue
+                try:
+                    lead = db.get_lead_time_days(iso)
+                except Exception:
+                    lead = None
+                if lead and lead > 0 and days_until < lead:
+                    country_name = db.find_country_name(iso) or iso
+                    lead_time_alerts.add(iso)
+                    oranges.append(
+                        f"DIC **{country_name}** : préavis officiel "
+                        f"{lead} j, il reste {days_until} j avant ton "
+                        f"EOBT → dépôt à risque, négocier en urgence."
+                    )
+        # Slot Eurocontrol CTOT : si origin ou destination en Europe
+        # (FIR L*/E*), préavis recommandé 2-3 h avant EOBT pour slot
+        # via CFMU. Caption info seulement (pas bloquant).
+        if eobt >= now and (eobt - now) < _dt.timedelta(hours=3):
+            for icao in (leg.get("origin"), leg.get("destination")):
+                if not icao:
+                    continue
+                ap = db.find_airport(icao)
+                if ap and (ap["country_iso"] or "").upper() in (
+                    "FR", "DE", "GB", "IT", "ES", "BE", "NL", "CH", "AT",
+                    "PT", "IE", "DK", "NO", "SE", "FI", "PL", "CZ", "GR",
+                ):
+                    if "EU_CTOT" not in lead_time_alerts:
+                        lead_time_alerts.add("EU_CTOT")
+                        oranges.append(
+                            f"Slot Eurocontrol CTOT : EOBT < 3h, "
+                            f"demande slot CFMU en urgence si pas déjà fait."
+                        )
+                    break
         fl = int(leg.get("fl") or 0)
         if fl <= 0:
             reds.append(f"{ltag} : FL non saisi.")

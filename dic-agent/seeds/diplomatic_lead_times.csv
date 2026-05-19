@@ -1,0 +1,48 @@
+country_iso,lead_time_days,notes
+BJ,5,Bénin — délai standard pour DIC civile
+BF,7,Burkina Faso
+CI,5,Côte d'Ivoire
+CM,10,Cameroun
+CG,14,Congo-Brazzaville
+CD,14,RDC
+DZ,14,Algérie — voie diplomatique
+EG,14,Egypte — souvent demande complémentaire
+GA,7,Gabon
+GH,7,Ghana
+GN,7,Guinée
+GW,10,Guinée-Bissau
+LR,10,Liberia
+ML,5,Mali — fluctue selon contexte
+MR,10,Mauritanie
+NE,7,Niger
+NG,14,Nigeria — Federal MoD requirement
+SL,10,Sierra Leone
+SN,7,Sénégal
+TD,10,Tchad
+TG,5,Togo
+TN,7,Tunisie
+LY,21,Libye — variable selon le contexte
+MA,14,Maroc
+KE,14,Kenya
+ET,14,Ethiopie
+SD,21,Soudan
+SS,14,Soudan du Sud
+DJ,10,Djibouti
+SO,21,Somalie — survol risqué
+JO,7,Jordanie
+SA,14,Arabie Saoudite
+AE,7,EAU
+IQ,14,Irak — souvent par voie diplomatique militaire
+IR,21,Iran — préavis long
+TR,7,Turquie
+GR,3,Grèce — Eurocontrol mais préavis utile
+IT,3,Italie
+ES,3,Espagne
+FR,0,France — métropole, FPL seul si vol civil
+DE,0,Allemagne
+GB,0,Royaume-Uni
+BE,0,Belgique
+NL,0,Pays-Bas
+CH,0,Suisse
+AT,0,Autriche
+PT,3,Portugal

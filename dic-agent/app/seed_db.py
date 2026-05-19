@@ -221,6 +221,30 @@ def seed_countries() -> None:
     print(f"  countries: {n}")
 
 
+def seed_diplomatic_lead_times() -> int:
+    """Délais de préavis pour DIC par pays (jours). Référence pour la
+    pré-DIC checklist : alerte si EOBT - now < lead_time_days."""
+    csv_path = SEEDS_DIR / "diplomatic_lead_times.csv"
+    if not csv_path.exists():
+        print("  diplomatic_lead_times.csv missing — skipped")
+        return 0
+    rows = []
+    with csv_path.open(encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            try:
+                rows.append({
+                    "country_iso": r["country_iso"].strip().upper(),
+                    "lead_time_days": int(r["lead_time_days"]),
+                    "notes": (r.get("notes") or "").strip() or None,
+                })
+            except (KeyError, ValueError):
+                continue
+    n = db.upsert_lead_times(rows) if rows else 0
+    print(f"  diplomatic lead times: {n}")
+    return n
+
+
 def seed_amazone_missions() -> int:
     """Missions multi-leg pré-cablées du catalogue Amazone, surfaceées
     dans le picker Mission de la page Legs (dossier Bénin).
