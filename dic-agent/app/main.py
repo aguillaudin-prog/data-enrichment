@@ -959,22 +959,41 @@ def _render_briefing_section(*, legs: list[dict]) -> None:
     with bc2:
         st.write("")
         label = "🔄 Rafraîchir" if have_cache else "🌤️ Charger"
-        if st.button(label, key="briefing_fetch", width="stretch"):
-            if not ar_cfg.is_configured():
-                st.error("Autorouter pas configuré (voir page ⚙ Admin).")
-            else:
-                with st.spinner("Météo (parallèle) + NOTAMs…"):
-                    wx = autorouter_client.fetch_metartaf_batch(ar_cfg, icaos)
-                    notams = autorouter_client.fetch_notams(
-                        ar_cfg, icaos,
-                        startvalidity=start_ts, endvalidity=end_ts,
-                    )
-                st.session_state[cached_sig_key] = sig
-                st.session_state[cached_data_key] = {"wx": wx, "notams": notams}
-                st.rerun()
+        clicked = st.button(label, key="briefing_fetch", width="stretch")
+
+    # Auto-fetch silencieux au 1er render si :
+    # - pas de cache pour cette signature de mission
+    # - autorouter est configuré
+    # - on n'a pas déjà tenté pour cette signature (évite boucle)
+    auto_attempted_key = f"_briefing_auto_{sig}"
+    should_auto_fetch = (
+        not have_cache
+        and ar_cfg.is_configured()
+        and not st.session_state.get(auto_attempted_key)
+    )
+    if clicked or should_auto_fetch:
+        if not ar_cfg.is_configured():
+            st.error("Autorouter pas configuré (voir page ⚙ Admin).")
+        else:
+            with st.spinner("Météo (parallèle) + NOTAMs…"):
+                wx = autorouter_client.fetch_metartaf_batch(ar_cfg, icaos)
+                notams = autorouter_client.fetch_notams(
+                    ar_cfg, icaos,
+                    startvalidity=start_ts, endvalidity=end_ts,
+                )
+            st.session_state[cached_sig_key] = sig
+            st.session_state[cached_data_key] = {"wx": wx, "notams": notams}
+            st.session_state[auto_attempted_key] = True
+            st.rerun()
 
     if not have_cache:
-        st.info("Clique sur **🌤️ Charger** pour récupérer METAR/TAF et NOTAMs depuis autorouter.")
+        if not ar_cfg.is_configured():
+            st.info(
+                "Briefing automatique désactivé : autorouter pas configuré "
+                "(voir page ⚙ Admin)."
+            )
+        else:
+            st.info("Briefing en cours de chargement automatique…")
         _render_gramet_section(legs=legs, ar_cfg=ar_cfg)
         return
 
@@ -2480,6 +2499,51 @@ if page_idx == 2:
         else:
             c2.metric("Temps de vol", f"{resolution.total_time_min:.0f} min")
         c3.metric("Pays traversés", str(len(resolution.segments)))
+
+        # 🔥 Résumé NOTAMs critiques (impactant origin / dest / alt
+        # de ce leg). Lu depuis le cache _briefing_data déjà rempli
+        # par le briefing auto en haut de page Preview.
+        try:
+            from app import autorouter_client as _ar_for_notam
+            bdata = st.session_state.get("_briefing_data") or {}
+            all_notams = bdata.get("notams") or []
+            leg_icaos = [
+                (icao or "").strip().upper()
+                for icao in (leg.get("origin"), leg.get("destination"), leg.get("alternate"))
+                if icao
+            ]
+            crits = []
+            seen_ids = set()
+            for n in all_notams:
+                if not _ar_for_notam.is_critical_notam(n):
+                    continue
+                touches = any(
+                    (ic or "").strip().upper() in leg_icaos
+                    for ic in (n.itema or [])
+                )
+                if touches and n.id not in seen_ids:
+                    seen_ids.add(n.id)
+                    crits.append(n)
+            if crits:
+                with st.expander(
+                    f"🔥 {len(crits)} NOTAM(s) critique(s) sur ce leg",
+                    expanded=True,
+                ):
+                    for n in crits[:10]:  # limite à 10 pour pas pollu
+                        # Trouve l'ICAO concerné par ce NOTAM dans le leg
+                        ic = next(
+                            ((nic or "").strip().upper()
+                             for nic in (n.itema or [])
+                             if (nic or "").strip().upper() in leg_icaos),
+                            "?",
+                        )
+                        st.warning(
+                            f"**{ic}** · {_ar_for_notam.summarize_notam(n, max_chars=160)}"
+                        )
+                    if len(crits) > 10:
+                        st.caption(f"… et {len(crits) - 10} autre(s) NOTAM critique(s).")
+        except Exception:
+            pass
 
         # MORA (Minimum Off-Route Altitude) — terrain max + 1000 ft
         # buffer, arrondi au 100 ft supérieur. Comparé au FL de croisière
