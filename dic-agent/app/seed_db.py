@@ -344,10 +344,10 @@ def seed_amazone_missions() -> int:
         ]),
         ("Amazone", "[BJ] 12 — TOUROU ↔ DNKJ (KAINJI NAFB)", [
             {"order": 1, "origin": "TOUROU", "destination": "DNKJ",
-             "route_text": "TOUROU - DCT - KIGRA - DNKJ",
+             "route_text": "TOUROU - GANDA - DCT - DNKJ",
              "fl": 90, "tas": 140, "alternate": "DNIL"},
             {"order": 2, "origin": "DNKJ", "destination": "TOUROU",
-             "route_text": "DNKJ - KIGRA - DCT - TOUROU",
+             "route_text": "DNKJ - DCT - GANDA - TOUROU",
              "fl": 100, "tas": 140, "alternate": "DBBB"},
         ]),
         ("Amazone", "[BJ] 13 — DBBB ↔ DNAA", [

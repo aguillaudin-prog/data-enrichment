@@ -141,8 +141,17 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
                         "SELECT oew_kg FROM aircraft_type WHERE icao_designator = 'IL76'"
                     ).fetchone()
                     il76_ok = bool(il76_perf_ok and il76_perf_ok[0])
+                    # Vérifie que mission 12 utilise bien GANDA (fix décidé par
+                    # Cathy pour TOUROU↔KAINJI). Si la base contient encore
+                    # l'ancienne version KIGRA, on force le re-seed.
+                    m12_uses_ganda = c.execute(
+                        "SELECT COUNT(*) FROM route_template "
+                        "WHERE official = 1 AND variant = 'mission' "
+                        "AND name LIKE '%[BJ] 12 %' AND legs_json LIKE '%GANDA%'"
+                    ).fetchone()[0]
                 if (n_missions >= 25 and n_old_cats == 0 and n_old_names == 0
                         and n_dnkj > 0 and n_comjet > 0 and il76_ok
+                        and m12_uses_ganda > 0
                         and hasattr(db, "count_official_routes")
                         and db.count_official_routes() > 0):
                     # Missions OK mais on seed quand même les lead times
