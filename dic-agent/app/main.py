@@ -80,6 +80,16 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
         # d'anciennes missions saved avec typo (ex: 'KELI' au lieu de
         # 'KELIG') continuent à empoisonner les routes chargées.
         _fix_known_route_typos()
+        # Seeds idempotents à exécuter à CHAQUE boot (UPDATE/UPSERT légers,
+        # ~ms). Indépendants du gate de missions ci-dessous. Garantit que
+        # les fiches appareils sont à jour même si le gate skip le reste.
+        try:
+            from app.seed_db import seed_il76_comjet_perf, seed_comjet_aircraft, seed_dhc6_perf_refinements
+            seed_dhc6_perf_refinements()
+            seed_il76_comjet_perf()
+            seed_comjet_aircraft()
+        except Exception:
+            pass
         if not force:
             # Re-seed si manquant OU si schéma de missions changé.
             # Le catalogue Amazone vise 25 missions (17 routes numérotées
@@ -107,18 +117,18 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
                         "OR name LIKE '%(overflight%' OR name LIKE '%(techstop %' "
                         "OR name LIKE '%(évitement%' OR name LIKE '%Yaoundé%')"
                     ).fetchone()[0]
-                # Vérifie aussi que DNKJ (terrain Kainji NAFB) est seedé
-                n_dnkj = c.execute(
-                    "SELECT COUNT(*) FROM airport WHERE icao = 'DNKJ'"
-                ).fetchone()[0]
-                # Vérifie que COMJET (IL76) est en flotte + IL76 perf refined
-                n_comjet = c.execute(
-                    "SELECT COUNT(*) FROM aircraft WHERE registration = 'COMJET'"
-                ).fetchone()[0]
-                il76_perf_ok = c.execute(
-                    "SELECT oew_kg FROM aircraft_type WHERE icao_designator = 'IL76'"
-                ).fetchone()
-                il76_ok = bool(il76_perf_ok and il76_perf_ok[0])
+                    # Vérifie aussi que DNKJ (terrain Kainji NAFB) est seedé
+                    n_dnkj = c.execute(
+                        "SELECT COUNT(*) FROM airport WHERE icao = 'DNKJ'"
+                    ).fetchone()[0]
+                    # Vérifie que COMJET (IL76) est en flotte + IL76 perf refined
+                    n_comjet = c.execute(
+                        "SELECT COUNT(*) FROM aircraft WHERE registration = 'COMJET'"
+                    ).fetchone()[0]
+                    il76_perf_ok = c.execute(
+                        "SELECT oew_kg FROM aircraft_type WHERE icao_designator = 'IL76'"
+                    ).fetchone()
+                    il76_ok = bool(il76_perf_ok and il76_perf_ok[0])
                 if (n_missions >= 25 and n_old_cats == 0 and n_old_names == 0
                         and n_dnkj > 0 and n_comjet > 0 and il76_ok
                         and hasattr(db, "count_official_routes")
