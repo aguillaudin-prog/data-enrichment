@@ -244,6 +244,11 @@ def find_template_id_for_type(cfg: AutorouterConfig, icao_type: str) -> int | No
     stripping non-alphanumerics + uppercase, then match by exact equality
     or startswith (so DHC6 catches "DHC-6 Twin Otter").
 
+    Si aucun match direct n'est trouvé, on tente une table de synonymes
+    : Twin Otter (DHC6) → Beech 1900D (light twin turboprop équivalent),
+    Caravan (C208) → PC-12, Hercules (C130) → King Air 200, etc. Le
+    routage IFR/airways reste cohérent à défaut d'un template exact.
+
     Returns the catalog entry's `id` — directly usable as `aircraftid` in
     /router payloads since these 67 templates are public + validated by
     autorouter. None if no match so caller falls back to aircraftid=0.
@@ -270,35 +275,83 @@ def find_template_id_for_type(cfg: AutorouterConfig, icao_type: str) -> int | No
 
     needle_norm = _norm(canonical)
     _LAST_TEMPLATE_LOOKUP += f" needle={needle_norm!r}"
-    # 1er passage : match exact normalisé. 2ème passage : startswith
-    # pour capter les variantes longues (DHC6 ↔ "DHC-6 Twin Otter").
+    # On essaie d'abord le canonical, puis chaque synonyme dans l'ordre
+    # de proximité. Pour chaque needle on tente strict puis startswith.
+    needles_to_try = [needle_norm]
+    for syn in _ICAO_TEMPLATE_SYNONYMS.get(canonical, ()):
+        nsyn = _norm(syn)
+        if nsyn and nsyn not in needles_to_try:
+            needles_to_try.append(nsyn)
+
     candidates_seen: list[str] = []
-    for strict in (True, False):
-        for t in templates:
-            for key in ("icao", "icaoid", "type", "icaotype", "designator",
-                        "model", "modelname"):
-                v = t.get(key)
-                if not isinstance(v, str):
-                    continue
-                v_norm = _norm(v)
-                if not v_norm:
-                    continue
-                if strict and len(candidates_seen) < 10:
-                    candidates_seen.append(v_norm)
-                hit = (v_norm == needle_norm) if strict else v_norm.startswith(needle_norm)
-                if hit:
-                    tid = t.get("id") or t.get("aircraftid") or t.get("templateid")
-                    if tid is not None:
-                        try:
-                            tid_int = int(tid)
-                            _LAST_TEMPLATE_LOOKUP += (
-                                f" MATCH key={key} v={v!r} id={tid_int} strict={strict}"
-                            )
-                            return tid_int
-                        except (TypeError, ValueError):
-                            continue
-    _LAST_TEMPLATE_LOOKUP += f" NO MATCH (sample candidates: {candidates_seen[:10]})"
+    for needle_idx, current_needle in enumerate(needles_to_try):
+        for strict in (True, False):
+            for t in templates:
+                for key in ("icao", "icaoid", "type", "icaotype", "designator",
+                            "model", "modelname"):
+                    v = t.get(key)
+                    if not isinstance(v, str):
+                        continue
+                    v_norm = _norm(v)
+                    if not v_norm:
+                        continue
+                    if needle_idx == 0 and strict and len(candidates_seen) < 10:
+                        candidates_seen.append(v_norm)
+                    hit = (v_norm == current_needle) if strict else v_norm.startswith(current_needle)
+                    if hit:
+                        tid = t.get("id") or t.get("aircraftid") or t.get("templateid")
+                        if tid is not None:
+                            try:
+                                tid_int = int(tid)
+                                via = "direct" if needle_idx == 0 else f"synonym[{current_needle}]"
+                                _LAST_TEMPLATE_LOOKUP += (
+                                    f" MATCH {via} key={key} v={v!r} id={tid_int} strict={strict}"
+                                )
+                                return tid_int
+                            except (TypeError, ValueError):
+                                continue
+    _LAST_TEMPLATE_LOOKUP += (
+        f" NO MATCH (tried {len(needles_to_try)} needle(s), "
+        f"sample candidates: {candidates_seen[:10]})"
+    )
     return None
+
+
+# Mappings ICAO designator → liste de patterns alternatifs à tenter sur le
+# catalogue /aircraft/templates si le designator exact n'est pas présent.
+# Permet de routeur un Twin Otter via un Beech 1900D (light twin turboprop
+# équivalent en wake/range), ou un C-130 via King Air 200, etc. Le routage
+# IFR/airways reste cohérent même si la perf n'est pas pile poil exacte.
+_ICAO_TEMPLATE_SYNONYMS: dict[str, tuple[str, ...]] = {
+    # Light twin turboprops : Twin Otter → Beech 1900 → King Air → PC-12
+    "DHC6": ("1900D", "1900", "200SUPERKINGAIR", "PILATUSPC12", "PC12"),
+    "DHC7": ("1900D", "200SUPERKINGAIR"),
+    "DHC8": ("1900D", "200SUPERKINGAIR"),
+    "L410": ("1900D", "200SUPERKINGAIR"),
+    "AN26": ("1900D", "200SUPERKINGAIR"),
+    "AN24": ("1900D", "200SUPERKINGAIR"),
+    "AN32": ("1900D", "200SUPERKINGAIR"),
+    "C295": ("1900D", "200SUPERKINGAIR"),
+    "C235": ("1900D", "200SUPERKINGAIR"),
+    "C160": ("1900D", "200SUPERKINGAIR"),
+    "C130": ("1900D", "200SUPERKINGAIR"),
+    "C30J": ("1900D", "200SUPERKINGAIR"),
+    "C208": ("PILATUSPC12", "PC12", "1900D"),
+    "B190": ("1900D", "1900"),
+    "B350": ("200SUPERKINGAIR", "1900D"),
+    "BE20": ("200SUPERKINGAIR", "1900D"),
+    "BE9L": ("200SUPERKINGAIR", "1900D"),
+    "PC12": ("PILATUSPC12", "1900D"),
+    "KODI": ("PILATUSPC12", "1900D"),
+    "TBM9": ("PILATUSPC12", "DA62"),
+    "TBM7": ("PILATUSPC12", "DA62"),
+    # Light piston twins
+    "BE58": ("58BARON", "BARON"),
+    "DA42": ("DA62",),
+    # Light pistons single → Bonanza / Skyhawk
+    "SR22": ("36BONANZA", "BONANZA"),
+    "C172": ("172",),
+}
 
 
 _LAST_TEMPLATE_LOOKUP: str = ""
@@ -686,6 +739,58 @@ def _suggest_route_once(
             pass
 
 
+def precheck_route_feasibility(
+    departure: str, destination: str, aircraft_type: str | None,
+) -> tuple[bool, str]:
+    """Vérifie qu'un appareil donné a le range pour faire le grand-cercle
+    origin↔destination en nonstop. Retourne (ok, message).
+
+    Si non OK, le message est prêt-à-afficher : "⚠️ DHC6 range 800 NM ≪
+    route 3771 NM. Découpe la mission en legs intermédiaires.". Évite
+    un appel autorouter qui va échouer avec internalerror après 30-90 s.
+
+    Tolérance 10 % (un Twin Otter à 800 NM range peut faire 880 NM dans
+    des conditions favorables). Retourne (True, "") si pas d'info perf
+    ou si distance < range*1.1, ou si on ne peut pas géolocaliser.
+    """
+    if not aircraft_type:
+        return True, ""
+    canonical = _canonical_icao_type(aircraft_type)
+    if not canonical:
+        return True, ""
+    perf = db.find_aircraft_type(canonical)
+    range_nm: int | None = None
+    if perf:
+        try:
+            range_nm = int(perf["range_nm"]) if perf["range_nm"] else None
+        except (KeyError, IndexError, TypeError, ValueError):
+            range_nm = None
+    if not range_nm:
+        return True, ""
+    dep_ap = db.find_airport((departure or "").strip().upper())
+    dst_ap = db.find_airport((destination or "").strip().upper())
+    if not dep_ap or not dst_ap:
+        return True, ""
+    try:
+        lat1, lon1 = float(dep_ap["lat"]), float(dep_ap["lon"])
+        lat2, lon2 = float(dst_ap["lat"]), float(dst_ap["lon"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return True, ""
+    import math
+    R_NM = 3440.065
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    dist_nm = 2 * R_NM * math.asin(math.sqrt(a))
+    if dist_nm > range_nm * 1.1:
+        return False, (
+            f"⚠️ {canonical} range {range_nm} NM ≪ route {dist_nm:.0f} NM. "
+            f"Découpe la mission en legs intermédiaires."
+        )
+    return True, ""
+
+
 def suggest_route(
     cfg: AutorouterConfig,
     departure: str, destination: str,
@@ -709,7 +814,15 @@ def suggest_route(
     Le 2e essai n'est lancé que si le 1er échoue avec un signal exploitable
     — pas sur les erreurs réseau, OAuth ou timeout (ces conditions
     persistent).
+
+    Pré-vérif range : si la distance grand-cercle origin↔destination
+    dépasse 110 % du range de l'appareil, on raise immédiatement avant
+    d'appeler autorouter (qui rendra 30-90 s plus tard un internalerror
+    cryptique). Le message d'erreur est prêt à afficher dans l'UI.
     """
+    ok, why = precheck_route_feasibility(departure, destination, aircraft_type)
+    if not ok:
+        raise AutorouterError(why)
     needs_vfr_first = _is_user_added(departure) or _is_user_added(destination)
     tpl_id = find_template_id_for_type(cfg, aircraft_type or "") if aircraft_type else None
 
