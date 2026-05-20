@@ -429,7 +429,7 @@ def seed_amazone_missions() -> int:
              "route_text": "KRG - BKY - DEGAS - AD",
              "fl": 100, "tas": 140, "alternate": "DIYO"},
         ]),
-        ("Amazone", "[CI] 17 — DIAP ↔ DNKJ (évitement GH/TG)", [
+        ("Amazone", "[CI] 17 — DIAP ↔ DNKJ — évitement GH/TG", [
             {"order": 1, "origin": "DIAP", "destination": "DNKJ",
              "route_text": "AD - ARABA - ENKIT - EBUSO - TYE - POLTO - LAG - B731 - KIGRA - DNKJ",
              "fl": 90, "tas": 140, "alternate": "DNIL"},
