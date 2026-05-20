@@ -3152,9 +3152,48 @@ if page_idx == 3 and _is_admin():
                 inserted += 1
             st.success(
                 f"✅ {inserted} appareil(s) en base — dont l'A321F SkyVision "
-                f"(F-HSVA, cruise 447 kt, ceiling FL398, wake M)."
+                f"(F-HSVA, cruise 447 kt, ceiling FL398, wake M) "
+                f"et l'IL-76TD COMJET (cruise 430 kt, ceiling FL390, wake H)."
             )
             st.rerun()
+
+        # Diag : dump de l'état actuel pour vérifier ce qui est en base
+        # vs ce qu'on attend. Permet à l'OPS de confirmer immédiatement
+        # si COMJET (ou autre) est bien onboardé ou s'il manque.
+        st.markdown("**État actuel flotte (DB) :**")
+        try:
+            with db.connect() as c:
+                fleet_rows = c.execute(
+                    "SELECT registration, type_icao, callsign, operator "
+                    "FROM aircraft ORDER BY operator, registration"
+                ).fetchall()
+                type_rows = c.execute(
+                    "SELECT icao_designator, full_name, cruise_tas_kt, "
+                    "service_ceiling_ft, oew_kg, mtow_kg "
+                    "FROM aircraft_type "
+                    "WHERE icao_designator IN ('DHC6','IL76','DA62','L410','B190','A321') "
+                    "ORDER BY icao_designator"
+                ).fetchall()
+            if fleet_rows:
+                st.caption(f"{len(fleet_rows)} appareils :")
+                for r in fleet_rows:
+                    st.write(
+                        f"- **{r['registration']}** / {r['type_icao']} · "
+                        f"callsign `{r['callsign']}` · op `{r['operator']}`"
+                    )
+            else:
+                st.warning("⚠️ Table aircraft vide — clique '📥 Importer flotte type'.")
+            st.caption("Types pertinents :")
+            for r in type_rows:
+                oew = r['oew_kg'] if r['oew_kg'] else "—"
+                mtow = r['mtow_kg'] if r['mtow_kg'] else "—"
+                st.write(
+                    f"- **{r['icao_designator']}** {r['full_name']} · "
+                    f"cruise {r['cruise_tas_kt']} kt · plafond {r['service_ceiling_ft']} ft · "
+                    f"OEW {oew} · MTOW {mtow}"
+                )
+        except Exception as e:
+            st.error(f"Erreur lecture DB : {e}")
 
     with st.expander("🛩️ Aérodromes opérationnels (sans ICAO)", expanded=True):
         st.markdown(
