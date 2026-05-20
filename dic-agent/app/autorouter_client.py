@@ -310,9 +310,40 @@ def find_template_id_for_type(cfg: AutorouterConfig, icao_type: str) -> int | No
                                 return tid_int
                             except (TypeError, ValueError):
                                 continue
+    # Fallback : on regarde les appareils utilisateur (créés sur le compte
+    # autorouter via le formulaire RocketRoute). Pour les IL76/AN26/C130
+    # absents du catalogue public, l'OPS configure souvent une fiche perso
+    # avec leurs vrais perf — on récupère son id.
+    try:
+        user_aircraft = list_aircraft(cfg)
+    except AutorouterError:
+        user_aircraft = []
+    if user_aircraft:
+        for a in user_aircraft:
+            for key in ("icaotypename", "icao", "type", "icaotype", "designator",
+                        "registration", "callsign", "model"):
+                v = a.get(key)
+                if not isinstance(v, str):
+                    continue
+                v_norm = _norm(v)
+                if not v_norm:
+                    continue
+                for current_needle in needles_to_try:
+                    if v_norm == current_needle or v_norm.startswith(current_needle):
+                        tid = a.get("id") or a.get("aircraftid") or a.get("templateid")
+                        if tid is not None:
+                            try:
+                                tid_int = int(tid)
+                                _LAST_TEMPLATE_LOOKUP += (
+                                    f" USER-AIRCRAFT MATCH key={key} v={v!r} id={tid_int}"
+                                )
+                                return tid_int
+                            except (TypeError, ValueError):
+                                continue
     _LAST_TEMPLATE_LOOKUP += (
         f" NO MATCH (tried {len(needles_to_try)} needle(s), "
-        f"sample candidates: {candidates_seen[:10]})"
+        f"sample public={candidates_seen[:10]}, "
+        f"user_aircraft={len(user_aircraft)})"
     )
     return None
 
@@ -430,6 +461,12 @@ _FALLBACK_AIRCRAFT_PERF: dict[str, dict] = {
     "B190":  {"cruisetas": 280, "defaultmaxfl": 250, "wakecategory": "M",
               "MTOM": 7765, "MLW": 7530, "MZFW": 7000, "BEW": 4815,
               "maxfuel": 1500, "climbrate": 2500, "descentrate": 2000},
+    # Ilyushin Il-76TD COMJET — strategic freighter. Profile RocketRoute :
+    # cruise 430 kt N0430, FL250-390 (préf. FL350), MTOW 190 t, OEW 98,95 t,
+    # MZFW 138 t, MLW 151,5 t, max fuel 116,4 t, step climb 2000 ft / 50 NM.
+    "IL76":  {"cruisetas": 430, "defaultmaxfl": 390, "wakecategory": "H",
+              "MTOM": 190000, "MLW": 151500, "MZFW": 138000, "BEW": 98950,
+              "maxfuel": 116400, "climbrate": 2000, "descentrate": 2000},
 }
 
 

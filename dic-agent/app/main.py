@@ -111,8 +111,16 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
                 n_dnkj = c.execute(
                     "SELECT COUNT(*) FROM airport WHERE icao = 'DNKJ'"
                 ).fetchone()[0]
+                # Vérifie que COMJET (IL76) est en flotte + IL76 perf refined
+                n_comjet = c.execute(
+                    "SELECT COUNT(*) FROM aircraft WHERE registration = 'COMJET'"
+                ).fetchone()[0]
+                il76_perf_ok = c.execute(
+                    "SELECT oew_kg FROM aircraft_type WHERE icao_designator = 'IL76'"
+                ).fetchone()
+                il76_ok = bool(il76_perf_ok and il76_perf_ok[0])
                 if (n_missions >= 25 and n_old_cats == 0 and n_old_names == 0
-                        and n_dnkj > 0
+                        and n_dnkj > 0 and n_comjet > 0 and il76_ok
                         and hasattr(db, "count_official_routes")
                         and db.count_official_routes() > 0):
                     # Missions OK mais on seed quand même les lead times
@@ -129,6 +137,7 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
         from app.seed_db import (
             seed_amazone_airports, seed_amazone_waypoints,
             seed_canonical_routes, seed_dhc6_perf_refinements,
+            seed_il76_comjet_perf, seed_comjet_aircraft,
             seed_amazone_missions, seed_diplomatic_lead_times,
         )
         n += seed_amazone_airports()
@@ -137,6 +146,8 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
         n += seed_amazone_missions()
         n += seed_diplomatic_lead_times()
         seed_dhc6_perf_refinements()
+        seed_il76_comjet_perf()
+        seed_comjet_aircraft()
     except Exception:
         pass
     return n
@@ -3110,6 +3121,9 @@ if page_idx == 3 and _is_admin():
             {"icao_designator": "A321", "full_name": "Airbus A321",
              "manufacturer": "Airbus", "cruise_tas_kt": 447,
              "service_ceiling_ft": 39800, "range_nm": 3200, "wake_category": "M"},
+            {"icao_designator": "IL76", "full_name": "Ilyushin Il-76TD (COMJET, MTOW 190 t)",
+             "manufacturer": "Ilyushin", "cruise_tas_kt": 430,
+             "service_ceiling_ft": 39000, "range_nm": 2700, "wake_category": "H"},
         ]
         DEFAULT_FLEET = [
             # (registration, type_icao, callsign, operator)
@@ -3118,6 +3132,7 @@ if page_idx == 3 and _is_admin():
             ("7Q-YAE",   "L410",  "7QYAE",  "DYNAMI AVIATION OPS"),
             ("F-WZNA",   "B190",  "FWZNA",  "DYNAMI AVIATION OPS"),
             ("F-HSVA",   "A321",  "SVA21F", "SKYVISION"),
+            ("COMJET",   "IL76",  "COMJET", "COMJET"),
         ]
         if st.button("📥 Importer flotte type"):
             db.upsert_aircraft_types(FLEET_TYPES)

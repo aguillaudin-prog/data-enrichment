@@ -683,6 +683,45 @@ def seed_dhc6_perf_refinements() -> None:
         print(f"  DHC6 perf refined → OEW 3813 kg / MTOW 5670 kg")
 
 
+def seed_il76_comjet_perf() -> None:
+    """Affine la fiche aircraft_type de l'IL76 avec les valeurs réelles
+    de COMJET (IL-76TD) : cruise 430 kt N0430, plafond utilisable FL390
+    (préf. FL350), OEW 98 950 kg, MTOW 190 000 kg, MZFW 138 000 kg,
+    MLW 151 500 kg, wake H. Source : profil RocketRoute / autorouter."""
+    db.init_schema()
+    with db.connect() as c:
+        cur = c.execute("SELECT * FROM aircraft_type WHERE icao_designator = 'IL76'")
+        row = cur.fetchone()
+        if not row:
+            # Ligne IL76 absente : on l'insère depuis zéro avec les valeurs
+            # COMJET pour ne pas dépendre du CSV seed.
+            c.execute(
+                "INSERT INTO aircraft_type (icao_designator, full_name, manufacturer, "
+                "cruise_tas_kt, service_ceiling_ft, range_nm, wake_category, "
+                "oew_kg, mtow_kg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("IL76", "Ilyushin Il-76TD (COMJET, MTOW 190 t)", "Ilyushin",
+                 430, 39000, 2700, "H", 98950, 190000),
+            )
+            print("  IL76 inserted with COMJET perf (cruise 430, OEW 98950, MTOW 190000)")
+            return
+        c.execute(
+            "UPDATE aircraft_type SET full_name = ?, cruise_tas_kt = ?, "
+            "service_ceiling_ft = ?, wake_category = ?, oew_kg = ?, mtow_kg = ? "
+            "WHERE icao_designator = 'IL76'",
+            ("Ilyushin Il-76TD (COMJET, MTOW 190 t)",
+             430, 39000, "H", 98950, 190000),
+        )
+        print("  IL76 perf refined → COMJET (cruise 430, OEW 98950, MTOW 190000)")
+
+
+def seed_comjet_aircraft() -> None:
+    """Insère/MAJ l'appareil COMJET (IL-76TD) dans la table aircraft.
+    Idempotent via UNIQUE(registration)."""
+    db.init_schema()
+    db.save_aircraft("COMJET", "IL76", "COMJET", "COMJET")
+    print("  COMJET (IL76) aircraft saved")
+
+
 def main() -> int:
     print("→ Init schema…")
     db.init_schema()
