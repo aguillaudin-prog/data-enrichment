@@ -66,30 +66,42 @@ st.markdown(
 )
 
 
+_BOOT_SEED_LOG: list[str] = []
+
+
 def _ensure_amazone_data_seeded(force: bool = False) -> int:
     """Seed des données opérateur Amazone. Idempotent. Self-healing : si
     les routes officielles ont disparu (suppression manuelle, wipe, etc.)
-    le seed re-tourne au prochain démarrage."""
+    le seed re-tourne au prochain démarrage.
+
+    Trace le détail dans _BOOT_SEED_LOG (visible dans Admin) pour
+    diagnostiquer pourquoi COMJET ou autres données disparaîtraient
+    entre reboots — le FS Cloud est éphémère donc le seed boot DOIT
+    réussir à chaque cold-start."""
+    global _BOOT_SEED_LOG
+    _BOOT_SEED_LOG = []
     n = 0
     try:
-        # Force la migration de schéma (ALTER TABLE pour les colonnes
-        # ajoutées, dont `official` qui peut manquer sur DB historique).
         db.init_schema()
-        # Fix des typos connus dans les templates sauvegardés. Idempotent
-        # (UPDATE ... WHERE LIKE est no-op si pas de match). Évite que
-        # d'anciennes missions saved avec typo (ex: 'KELI' au lieu de
-        # 'KELIG') continuent à empoisonner les routes chargées.
+        _BOOT_SEED_LOG.append("✓ init_schema")
         _fix_known_route_typos()
+        _BOOT_SEED_LOG.append("✓ fix_known_typos")
         # Seeds idempotents à exécuter à CHAQUE boot (UPDATE/UPSERT légers,
         # ~ms). Indépendants du gate de missions ci-dessous. Garantit que
         # les fiches appareils sont à jour même si le gate skip le reste.
         try:
-            from app.seed_db import seed_il76_comjet_perf, seed_comjet_aircraft, seed_dhc6_perf_refinements
+            from app.seed_db import (
+                seed_il76_comjet_perf, seed_comjet_aircraft,
+                seed_dhc6_perf_refinements,
+            )
             seed_dhc6_perf_refinements()
+            _BOOT_SEED_LOG.append("✓ dhc6_perf")
             seed_il76_comjet_perf()
+            _BOOT_SEED_LOG.append("✓ il76_perf")
             seed_comjet_aircraft()
-        except Exception:
-            pass
+            _BOOT_SEED_LOG.append("✓ comjet_aircraft")
+        except Exception as e:
+            _BOOT_SEED_LOG.append(f"✗ always-run seeds: {type(e).__name__}: {e}")
         if not force:
             # Re-seed si manquant OU si schéma de missions changé.
             # Le catalogue Amazone vise 25 missions (17 routes numérotées
@@ -141,25 +153,30 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
                         seed_diplomatic_lead_times()
                     except Exception:
                         pass
+                    _BOOT_SEED_LOG.append(
+                        f"⊘ gate skipped (missions={n_missions}, dnkj={n_dnkj}, "
+                        f"comjet={n_comjet}, il76_ok={il76_ok})"
+                    )
                     return 0  # schéma à jour
-            except Exception:
-                pass
+            except Exception as e:
+                _BOOT_SEED_LOG.append(f"⚠ gate check error: {type(e).__name__}: {e}")
         from app.seed_db import (
             seed_amazone_airports, seed_amazone_waypoints,
-            seed_canonical_routes, seed_dhc6_perf_refinements,
-            seed_il76_comjet_perf, seed_comjet_aircraft,
+            seed_canonical_routes,
             seed_amazone_missions, seed_diplomatic_lead_times,
         )
         n += seed_amazone_airports()
+        _BOOT_SEED_LOG.append(f"+ amazone_airports +{n}")
         n += seed_amazone_waypoints()
+        _BOOT_SEED_LOG.append(f"+ amazone_waypoints (running n={n})")
         n += seed_canonical_routes()
+        _BOOT_SEED_LOG.append(f"+ canonical_routes (running n={n})")
         n += seed_amazone_missions()
+        _BOOT_SEED_LOG.append(f"+ amazone_missions (running n={n})")
         n += seed_diplomatic_lead_times()
-        seed_dhc6_perf_refinements()
-        seed_il76_comjet_perf()
-        seed_comjet_aircraft()
-    except Exception:
-        pass
+        _BOOT_SEED_LOG.append(f"+ diplomatic_lead_times (running n={n})")
+    except Exception as e:
+        _BOOT_SEED_LOG.append(f"✗ outer: {type(e).__name__}: {e}")
     return n
 
 
@@ -3156,6 +3173,24 @@ if page_idx == 3 and _is_admin():
                 f"et l'IL-76TD COMJET (cruise 430 kt, ceiling FL390, wake H)."
             )
             st.rerun()
+
+        # Log du boot seed — capture les erreurs silencieuses qui pourraient
+        # expliquer pourquoi COMJET disparaît après reboot Cloud (FS éphémère).
+        if _BOOT_SEED_LOG:
+            st.markdown("**Log boot seed (dernier cold-start) :**")
+            for line in _BOOT_SEED_LOG:
+                st.code(line, language="text")
+
+        if st.button("🔄 Re-run seed boot maintenant", key="force_reseed_btn"):
+            # Re-exécute le seed sans devoir reboot. Utile sur Cloud quand
+            # le boot initial a foiré et que tu ne veux pas attendre le
+            # prochain cold-start.
+            try:
+                n_seeded = _ensure_amazone_data_seeded(force=True)
+                st.success(f"✅ Re-seed terminé (n={n_seeded}). Vois le log ci-dessus.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Re-seed planté : {type(e).__name__}: {e}")
 
         # Diag : dump de l'état actuel pour vérifier ce qui est en base
         # vs ce qu'on attend. Permet à l'OPS de confirmer immédiatement

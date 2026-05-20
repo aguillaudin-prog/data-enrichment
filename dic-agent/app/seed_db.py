@@ -716,9 +716,22 @@ def seed_il76_comjet_perf() -> None:
 
 def seed_comjet_aircraft() -> None:
     """Insère/MAJ l'appareil COMJET (IL-76TD) dans la table aircraft.
-    Idempotent via UNIQUE(registration)."""
+    Idempotent via UNIQUE(registration). Bypass db.save_aircraft pour
+    éviter sa clause RETURNING (SQLite 3.35+) qui peut planter sur
+    certains runtimes Cloud avec un SQLite plus ancien."""
     db.init_schema()
-    db.save_aircraft("COMJET", "IL76", "COMJET", "COMJET")
+    with db.connect() as c:
+        c.execute(
+            """
+            INSERT INTO aircraft (registration, type_icao, callsign, operator)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(registration) DO UPDATE SET
+                type_icao=excluded.type_icao,
+                callsign=excluded.callsign,
+                operator=excluded.operator
+            """,
+            ("COMJET", "IL76", "COMJET", "COMJET"),
+        )
     print("  COMJET (IL76) aircraft saved")
 
 
