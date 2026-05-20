@@ -82,9 +82,9 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
         _fix_known_route_typos()
         if not force:
             # Re-seed si manquant OU si schéma de missions changé.
-            # Le catalogue Amazone vise 23 missions (15 routes numérotées
-            # + variants). Si on en a moins, force le re-seed pour
-            # bénéficier de la dernière version.
+            # Le catalogue Amazone vise 25 missions (17 routes numérotées
+            # + variants, avec les routes 16/17 Kainji NAFB). Si on en a
+            # moins, force le re-seed pour bénéficier de la dernière version.
             try:
                 with db.connect() as c:
                     n_missions = c.execute(
@@ -107,7 +107,12 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
                         "OR name LIKE '%(overflight%' OR name LIKE '%(techstop %' "
                         "OR name LIKE '%(évitement%' OR name LIKE '%Yaoundé%')"
                     ).fetchone()[0]
-                if (n_missions >= 23 and n_old_cats == 0 and n_old_names == 0
+                # Vérifie aussi que DNKJ (terrain Kainji NAFB) est seedé
+                n_dnkj = c.execute(
+                    "SELECT COUNT(*) FROM airport WHERE icao = 'DNKJ'"
+                ).fetchone()[0]
+                if (n_missions >= 25 and n_old_cats == 0 and n_old_names == 0
+                        and n_dnkj > 0
                         and hasattr(db, "count_official_routes")
                         and db.count_official_routes() > 0):
                     # Missions OK mais on seed quand même les lead times
@@ -122,10 +127,11 @@ def _ensure_amazone_data_seeded(force: bool = False) -> int:
             except Exception:
                 pass
         from app.seed_db import (
-            seed_amazone_waypoints, seed_canonical_routes,
-            seed_dhc6_perf_refinements, seed_amazone_missions,
-            seed_diplomatic_lead_times,
+            seed_amazone_airports, seed_amazone_waypoints,
+            seed_canonical_routes, seed_dhc6_perf_refinements,
+            seed_amazone_missions, seed_diplomatic_lead_times,
         )
+        n += seed_amazone_airports()
         n += seed_amazone_waypoints()
         n += seed_canonical_routes()
         n += seed_amazone_missions()

@@ -342,12 +342,12 @@ def seed_amazone_missions() -> int:
              "route_text": "ACC - LM - TYE - TOUROU",
              "fl": 100, "tas": 140, "alternate": "DBBB"},
         ]),
-        ("Amazone", "[BJ] 12 — TOUROU ↔ KAINJI", [
-            {"order": 1, "origin": "TOUROU", "destination": "KAINJI",
-             "route_text": "TOUROU - DCT - KAINJI",
+        ("Amazone", "[BJ] 12 — TOUROU ↔ DNKJ (KAINJI NAFB)", [
+            {"order": 1, "origin": "TOUROU", "destination": "DNKJ",
+             "route_text": "TOUROU - DCT - KIGRA - DNKJ",
              "fl": 90, "tas": 140, "alternate": "DNIL"},
-            {"order": 2, "origin": "KAINJI", "destination": "TOUROU",
-             "route_text": "KAINJI - DCT - TOUROU",
+            {"order": 2, "origin": "DNKJ", "destination": "TOUROU",
+             "route_text": "DNKJ - KIGRA - DCT - TOUROU",
              "fl": 100, "tas": 140, "alternate": "DBBB"},
         ]),
         ("Amazone", "[BJ] 13 — DBBB ↔ DNAA", [
@@ -372,6 +372,14 @@ def seed_amazone_missions() -> int:
              "fl": 90, "tas": 140, "alternate": "DNIB"},
             {"order": 2, "origin": "DNIL", "destination": "DBBB",
              "route_text": "ILR - USGUN - V377 - LAG - POLTO - TYE",
+             "fl": 100, "tas": 140, "alternate": "DXXX"},
+        ]),
+        ("Amazone", "[BJ] 16 — DBBB ↔ DNKJ (KAINJI NAFB)", [
+            {"order": 1, "origin": "DBBB", "destination": "DNKJ",
+             "route_text": "TYE - POLTO - LAG - B731 - KIGRA - DCT DNKJ",
+             "fl": 90, "tas": 140, "alternate": "DNIL"},
+            {"order": 2, "origin": "DNKJ", "destination": "DBBB",
+             "route_text": "DNKJ - DCT KIGRA - B731 - LAG - POLTO - TYE",
              "fl": 100, "tas": 140, "alternate": "DXXX"},
         ]),
         # ────── Côte d'Ivoire (DIAP hub) ──────────────────────────────────
@@ -419,6 +427,14 @@ def seed_amazone_missions() -> int:
              "fl": 90, "tas": 140, "alternate": "DIYO"},
             {"order": 2, "origin": "DIKO", "destination": "DIAP",
              "route_text": "KRG - BKY - DEGAS - AD",
+             "fl": 100, "tas": 140, "alternate": "DIYO"},
+        ]),
+        ("Amazone", "[CI] 17 — DIAP ↔ DNKJ (évitement GH/TG)", [
+            {"order": 1, "origin": "DIAP", "destination": "DNKJ",
+             "route_text": "AD - ARABA - ENKIT - EBUSO - TYE - POLTO - LAG - B731 - KIGRA - DNKJ",
+             "fl": 90, "tas": 140, "alternate": "DNIL"},
+            {"order": 2, "origin": "DNKJ", "destination": "DIAP",
+             "route_text": "DNKJ - KIGRA - B731 - LAG - POLTO - TYE - EBUSO - ENKIT - ARABA - DCT AD",
              "fl": 100, "tas": 140, "alternate": "DIYO"},
         ]),
         # ────── Sénégal-Guinée (GUCY↔GOBD + GOBD↔GQNO) ────────────────────
@@ -584,6 +600,40 @@ def seed_canonical_routes() -> int:
     return n
 
 
+def seed_amazone_airports() -> int:
+    """Terrains spécifiques opérateur Amazone non publiés OurAirports
+    (typiquement bases militaires comme Kainji NAFB / DNKJ). Idempotent.
+
+    CSV : icao,iata,name,municipality,country_iso,lat,lon,elevation_ft,is_military
+    """
+    csv_path = SEEDS_DIR / "amazone_airports.csv"
+    if not csv_path.exists():
+        print("  amazone_airports.csv missing — skipped")
+        return 0
+    rows = []
+    with csv_path.open(encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            try:
+                rows.append({
+                    "icao": r["icao"].strip().upper(),
+                    "iata": (r.get("iata") or "").strip() or None,
+                    "name": r["name"].strip(),
+                    "municipality": (r.get("municipality") or "").strip() or None,
+                    "country_iso": (r.get("country_iso") or "").strip().upper() or None,
+                    "lat": float(r["lat"]),
+                    "lon": float(r["lon"]),
+                    "elevation_ft": int(r["elevation_ft"]) if r.get("elevation_ft") else None,
+                    "is_military": int(r.get("is_military") or 0),
+                    "user_added": 1,
+                })
+            except (KeyError, ValueError):
+                continue
+    n = db.upsert_airports(rows) if rows else 0
+    print(f"  amazone airports: {n}")
+    return n
+
+
 def seed_amazone_waypoints() -> int:
     """3 fixes maritimes custom Amazone (EBUSO, ENKIT, ARABA) utilisés sur
     les routes 1.A et 11.A (évitement Ghana & Togo en trajet maritime).
@@ -616,21 +666,21 @@ def seed_amazone_waypoints() -> int:
 
 def seed_dhc6_perf_refinements() -> None:
     """Affine la fiche aircraft_type du DHC6 avec les valeurs Amazone
-    précises (OEW 3813 kg / 8406 lbs, ISA+20 still air conditions).
-    On préserve les autres champs, on enrichit juste le full_name pour
-    que l'OPS voie d'où viennent les chiffres dans les calculs."""
+    précises (OEW 3813 kg / 8406 lbs pour TY-BAB, MTOW 5670 kg DHC6-400,
+    ISA+20 still air conditions). Utilisé pour fuel/W&B futurs."""
+    db.init_schema()
     with db.connect() as c:
         cur = c.execute("SELECT * FROM aircraft_type WHERE icao_designator = 'DHC6'")
         row = cur.fetchone()
         if not row:
             return
         new_name = "De Havilland Canada DHC-6-400 Twin Otter (TY-BAB, OEW 3813 kg)"
-        if (row["full_name"] or "") != new_name:
-            c.execute(
-                "UPDATE aircraft_type SET full_name = ? WHERE icao_designator = 'DHC6'",
-                (new_name,),
-            )
-            print(f"  DHC6 perf refined → {new_name}")
+        c.execute(
+            "UPDATE aircraft_type SET full_name = ?, oew_kg = ?, mtow_kg = ? "
+            "WHERE icao_designator = 'DHC6'",
+            (new_name, 3813, 5670),
+        )
+        print(f"  DHC6 perf refined → OEW 3813 kg / MTOW 5670 kg")
 
 
 def main() -> int:
@@ -646,6 +696,8 @@ def main() -> int:
     seed_runways()
     print("→ Countries…")
     seed_countries()
+    print("→ Amazone airfields (DNKJ Kainji NAFB)…")
+    seed_amazone_airports()
     print("→ Amazone maritime waypoints…")
     seed_amazone_waypoints()
     print("→ Canonical routes (Amazone)…")

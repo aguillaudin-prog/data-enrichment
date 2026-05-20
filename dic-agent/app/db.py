@@ -242,6 +242,10 @@ def _migrate(conn) -> None:
             conn.execute("ALTER TABLE aircraft_type ADD COLUMN approach_cat TEXT")
         if "climb_gradient_pct" not in ac_cols:
             conn.execute("ALTER TABLE aircraft_type ADD COLUMN climb_gradient_pct REAL")
+        if "oew_kg" not in ac_cols:
+            conn.execute("ALTER TABLE aircraft_type ADD COLUMN oew_kg INTEGER")
+        if "mtow_kg" not in ac_cols:
+            conn.execute("ALTER TABLE aircraft_type ADD COLUMN mtow_kg INTEGER")
     cur = conn.execute("PRAGMA table_info(airport)")
     apt_cols = {row[1] for row in cur.fetchall()}
     if apt_cols and "municipality" not in apt_cols:
